@@ -1,9 +1,7 @@
 use serde::{Serialize, Deserialize};
 
 mod event_handler;
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u32);
+pub use event_handler::handle;
 
 /// The top-level event type
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,12 +1,13 @@
-use std::{sync::Arc, collections::HashMap};
+use std::collections::HashMap;
 
 use tokio::{net::{TcpListener, unix::SocketAddr, tcp::{OwnedWriteHalf, OwnedReadHalf}}, sync::Mutex, select};
 use tokio_util::codec::{LengthDelimitedCodec, FramedWrite, FramedRead};
-use futures::{Sink, Stream, SinkExt};
+use futures::{Future, SinkExt, TryStreamExt};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
 
-use crate::core::{Message, NodeId};
-
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct NodeId(pub u32);
 
 pub struct Peer {
     pub id: NodeId,
@@ -17,16 +18,27 @@ pub struct Peer {
 /// Received messages are handled as incoming events.
 ///
 /// Routing etc is handled transparently.
-pub struct Network {
+pub struct Network<T, F, FUT>
+where
+    T: 'static + Serialize + DeserializeOwned + Send + Sync,
+    F: 'static + Send + Clone + Fn(T) -> FUT,
+    FUT: Future<Output = ()> + Send,
+{
     pub my_id: NodeId,
     pub peers: Vec<Peer>,
 
     streams: Mutex<HashMap<NodeId, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
-    outgoing_buffer: Vec<(NodeId, Message)>,
+    outgoing_buffer: Vec<(NodeId, T)>,
+    handler: F,
 }
 
-impl Network {
-    async fn new() -> Self {
+impl<T, F, FUT> Network<T, F, FUT>
+where
+    T: 'static + Serialize + DeserializeOwned + Send + Sync,
+    F: 'static + Send + Clone + Fn(T) -> FUT,
+    FUT: Future<Output = ()> + Send,
+{
+    async fn new(msg_handler: F) -> Self {
         // let x = Framed::new()
         Self {
             my_id: NodeId(0), // TODO: assign unique ids
@@ -34,13 +46,14 @@ impl Network {
 
             streams: Default::default(),
             outgoing_buffer: vec![],
+            handler: msg_handler,
         }
     }
 
     /// Buffers an outgoing message for sending.
     ///
     /// TODO: potentially it might be better to remove the buffer and just feed msgs to the sender immediately
-    fn send(&mut self, to: NodeId, msg: Message) {
+    fn send(&mut self, to: NodeId, msg: T) {
         self.outgoing_buffer.push((to, msg));
     }
 
@@ -65,18 +78,25 @@ impl Network {
                 let (reader, writer) = stream.into_split();
                 let framed_writer = FramedWrite::new(writer, LengthDelimitedCodec::new());
                 let framed_reader = FramedRead::new(reader, LengthDelimitedCodec::new());
-                tokio::task::spawn(async move { handle_read_half(framed_reader).await });
+                let handle_fn = self.handler.clone();
+                tokio::task::spawn(async move { Self::handle_read_half(framed_reader, handle_fn).await });
                 self.streams.lock().await.insert(NodeId(0), framed_writer);
             } else {
                 todo!("handle listener error")
             }
         }
     }
+
+    async fn handle_read_half(
+        mut reader: FramedRead<OwnedReadHalf, LengthDelimitedCodec>,
+        handler: F,
+    ) -> anyhow::Result<()> {
+        while let Some(data) = reader.try_next().await? {
+            let msg: T = bincode::deserialize(&data).unwrap();
+            let handle_fn = handler.clone();
+            tokio::task::spawn(async move { handle_fn(msg).await });
+        }
+        todo!()
+    }
 }
 
-async fn handle_read_half(reader: FramedRead<OwnedReadHalf, LengthDelimitedCodec>) -> anyhow::Result<()> {
-    // loop {
-    //     let x = reader.
-    // }
-    todo!()
-}
