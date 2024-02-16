@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tokio::{net::{TcpListener, unix::SocketAddr, tcp::{OwnedWriteHalf, OwnedReadHalf}}, sync::Mutex, select};
+use tokio::{net::{TcpListener, unix::SocketAddr, tcp::{OwnedWriteHalf, OwnedReadHalf}}, sync::Mutex};
 use tokio_util::codec::{LengthDelimitedCodec, FramedWrite, FramedRead};
 use futures::{Future, SinkExt, TryStreamExt};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
@@ -12,6 +12,12 @@ pub struct NodeId(pub u32);
 pub struct Peer {
     pub id: NodeId,
     pub addr: SocketAddr,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum NetworkMsg<T> {
+    Payload(T),
+    Join(NodeId), // TODO: cluster membership
 }
 
 /// A network abstraction that asynchronously sends messages between peers.
@@ -28,7 +34,7 @@ where
     pub peers: Vec<Peer>,
 
     streams: Mutex<HashMap<NodeId, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
-    outgoing_buffer: Vec<(NodeId, T)>,
+    outgoing_buffer: Vec<(NodeId, NetworkMsg<T>)>,
     handler: F,
 }
 
@@ -54,7 +60,7 @@ where
     ///
     /// TODO: potentially it might be better to remove the buffer and just feed msgs to the sender immediately
     fn send(&mut self, to: NodeId, msg: T) {
-        self.outgoing_buffer.push((to, msg));
+        self.outgoing_buffer.push((to, NetworkMsg::Payload(msg)));
     }
 
     /// Send buffered outgoing messages.
@@ -92,11 +98,16 @@ where
         handler: F,
     ) -> anyhow::Result<()> {
         while let Some(data) = reader.try_next().await? {
-            let msg: T = bincode::deserialize(&data).unwrap();
-            let handle_fn = handler.clone();
-            tokio::task::spawn(async move { handle_fn(msg).await });
+            let msg: NetworkMsg<T> = bincode::deserialize(&data).unwrap();
+            match msg {
+                NetworkMsg::Payload(msg) => {
+                    let handle_fn = handler.clone();
+                    tokio::task::spawn(async move { handle_fn(msg).await });
+                },
+                NetworkMsg::Join(node_id) => todo!(),
+            }
         }
-        todo!()
+        Ok(())
     }
 }
 
