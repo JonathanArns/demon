@@ -30,7 +30,6 @@ struct NetworkMsg<T> {
 enum Message<T> {
     Payload(T),
     Join,
-    Remove(NodeId),
     GetPeers,
     Peers(Vec<Peer>),
 }
@@ -293,17 +292,6 @@ where
                         msg: Message::<T>::Peers(vec![Peer{id: from, addr}]),
                     };
                     self.broadcast(msg).await;
-                },
-                Message::Remove(node_id) => {
-                    if self.peers.read().await.contains_key(&node_id) {
-                        self.peers.write().await.remove(&node_id);
-                        let msg = NetworkMsg{
-                            from: self.my_id,
-                            msg: Message::<T>::Remove(node_id),
-                        };
-                        self.broadcast(msg).await;
-                    }
-                    // TODO: cleanup socket as well
                 },
                 Message::GetPeers => {
                     self.send_peers(from).await;
