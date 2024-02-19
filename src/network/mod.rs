@@ -29,9 +29,26 @@ struct NetworkMsg<T> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message<T> {
     Payload(T),
-    Join,
-    GetPeers,
-    Peers(Vec<Peer>),
+
+    Prepare{
+        round: u32,
+    },
+    Promise{
+        round: u32,
+        peers: Vec<Peer>,
+        accepted: Option<Peer>,
+    },
+    Propose{
+        round: u32,
+        proposal: Peer,
+    },
+    Accept{
+        round: u32,
+    },
+    Decide{
+        round: u32,
+        proposal: Peer,
+    },
 }
 
 /// A network abstraction that asynchronously sends messages between peers.
@@ -68,31 +85,39 @@ where
     F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
     FUT: 'static + Future<Output = ()> + Send,
 {
-    /// Creates and starts the local network instance.
+    /// Creates and connects the local network instance.
     /// Handles to this instance should be created with `clone`.
-    pub async fn new(msg_handler: F) -> Self {
+    ///
+    /// If called with no addrs, this node is the first one in the cluster.
+    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, msg_handler: F) -> anyhow::Result<Self> {
         let id = NodeId(rand::random());
         let network = Self {inner: Arc::new(NetworkInner::new(id, msg_handler).await)};
         tokio::task::spawn(network.inner.clone().listen());
-        tokio::task::spawn(network.inner.clone().chatter());
+        // tokio::task::spawn(network.inner.clone().chatter());
         tokio::task::spawn(network.inner.clone().send_loop());
-        network
-    }
 
-    /// Connects this node to an existing cluster.
-    /// Can be called with the address of any existing node in the cluster.
-    pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> anyhow::Result<()> {
-        for addr in lookup_host(addrs).await? {
-            let r = self.inner.clone().connect(addr.ip()).await;
-            if r.is_err() {
-                continue
+
+        if let Some(addrs) = addrs {
+            for addr in lookup_host(addrs).await? {
+                let r = network.inner.clone().connect(addr.ip()).await;
+                if r.is_err() {
+                    bail!("could not connect to cluster");
+                }
             }
-            self.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(
-                bincode::serialize(&NetworkMsg{from: self.inner.my_id, msg: Message::<T>::Join}).unwrap().into()
-            ).await?;
-            return Ok(())
+
+            // we run paxos here to connect with a unique ID
+            loop {
+                let msg = NetworkMsg {
+                    from: *network.inner.id.read().await,
+                    msg: Message::Prepare{ round: *network.inner.round.lock().await },
+                };
+                network.inner.broadcast(msg).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        } else { // we are the first node
+            *network.inner.id.write().await = NodeId(0);
         }
-        bail!("could not connect to cluster")
+        Ok(network)
     }
 
     /// Get a list of currently known peers.
@@ -117,11 +142,22 @@ where
     F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
     FUT: 'static + Future<Output = ()> + Send,
 {
-    my_id: NodeId,
-    peers: RwLock<HashMap<NodeId, Peer>>,
+    id: RwLock<NodeId>,
     streams: Mutex<HashMap<IpAddr, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
     outgoing_buffer: Mutex<Vec<(NodeId, NetworkMsg<T>)>>,
     handler: F,
+
+    peers: RwLock<HashMap<NodeId, Peer>>,
+
+    // acceptor state
+    promised: Mutex<NodeId>,
+    accepted: Mutex<Option<Peer>>,
+
+    // proposer state
+    round: Mutex<u32>,
+    promises: Mutex<u32>,
+    acceptances: Mutex<u32>,
+    proposal: Mutex<Option<Peer>>,
 }
 
 impl<T, F, FUT> NetworkInner<T, F, FUT>
@@ -137,18 +173,28 @@ where
 
     async fn new(id: NodeId, msg_handler: F) -> Self {
         Self {
-            my_id: id,
-            peers: Default::default(),
-
+            id: RwLock::new(id),
             streams: Default::default(),
             outgoing_buffer: Default::default(),
             handler: msg_handler,
+
+            peers: Default::default(),
+
+            // acceptor state
+            promised: Mutex::new(NodeId(0)),
+            accepted: Default::default(),
+
+            // proposer state
+            round: Default::default(),
+            promises: Default::default(),
+            acceptances: Default::default(),
+            proposal: Default::default(),
         }
     }
 
     /// Wraps and buffers an outgoing message for sending.
     async fn send(&self, to: NodeId, msg: T) {
-        self.internal_send(to, NetworkMsg{from: self.my_id, msg: Message::Payload(msg)}).await
+        self.internal_send(to, NetworkMsg{from: *self.id.read().await, msg: Message::Payload(msg)}).await
     }
 
     /// Buffers an outgoing message for sending.
@@ -212,35 +258,35 @@ where
     }
 
     /// We gossip our peers in a ring, so eventually everyone knows everyone.
-    async fn chatter(self: Arc<Self>) {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+    // async fn chatter(self: Arc<Self>) {
+    //     loop {
+    //         tokio::time::sleep(Duration::from_secs(1)).await;
 
-            // find the peer to talk to
-            let mut next_peer = NodeId(u32::MAX);
-            let mut smallest_peer = NodeId(u32::MAX);
-            for peer in self.peers.read().await.keys() {
-                if peer.0 > self.my_id.0 && peer.0 < next_peer.0 {
-                    next_peer = *peer;
-                }
-                if peer.0 < smallest_peer.0 {
-                    smallest_peer = *peer;
-                }
-                // self.send_peers(*peer).await;
-            }
+    //         // find the peer to talk to
+    //         let mut next_peer = NodeId(u32::MAX);
+    //         let mut smallest_peer = NodeId(u32::MAX);
+    //         for peer in self.peers.read().await.keys() {
+    //             if peer.0 > self.id.0 && peer.0 < next_peer.0 {
+    //                 next_peer = *peer;
+    //             }
+    //             if peer.0 < smallest_peer.0 {
+    //                 smallest_peer = *peer;
+    //             }
+    //             // self.send_peers(*peer).await;
+    //         }
 
-            if next_peer.0 != u32::MAX {
-                self.send_peers(next_peer).await;
-            } else if smallest_peer.0 != u32::MAX {
-                self.send_peers(smallest_peer).await;
-            }
+    //         if next_peer.0 != u32::MAX {
+    //             self.send_peers(next_peer).await;
+    //         } else if smallest_peer.0 != u32::MAX {
+    //             self.send_peers(smallest_peer).await;
+    //         }
 
-            // // alternative: just broadcast
-            // for peer in self.peers.read().await.keys() {
-            //     self.send_peers(*peer).await;
-            // }
-        }
-    }
+    //         // // alternative: just broadcast
+    //         // for peer in self.peers.read().await.keys() {
+    //         //     self.send_peers(*peer).await;
+    //         // }
+    //     }
+    // }
 
     async fn handle_new_stream(self: Arc<Self>, stream: TcpStream, peer_addr: IpAddr) -> anyhow::Result<()> {
         let (reader, writer) = stream.into_split();
@@ -253,12 +299,12 @@ where
         Ok(())
     }
 
-    /// Sends `to` a list of known peers.
-    async fn send_peers(&self, to: NodeId) {
-        let peers = self.peers.read().await.values().map(|p| p.to_owned()).collect();
-        let msg = NetworkMsg{from: self.my_id, msg: Message::Peers(peers)};
-        self.internal_send(to, msg).await;
-    }
+    // /// Sends `to` a list of known peers.
+    // async fn send_peers(&self, to: NodeId) {
+    //     let peers = self.peers.read().await.values().map(|p| p.to_owned()).collect();
+    //     let msg = NetworkMsg{from: self.id, msg: Message::Peers(peers)};
+    //     self.internal_send(to, msg).await;
+    // }
 
     /// Sends `msg` to all known peers.
     async fn broadcast(&self, msg: NetworkMsg<T>) {
@@ -285,25 +331,78 @@ where
                     let handle_fn = handler.clone();
                     tokio::task::spawn(async move { handle_fn(from, msg).await });
                 },
-                Message::Join => {
-                    self.send_peers(from).await;
-                    let msg = NetworkMsg{
-                        from: self.my_id,
-                        msg: Message::<T>::Peers(vec![Peer{id: from, addr}]),
-                    };
-                    self.broadcast(msg).await;
+                Message::Prepare{round} => {
+                    let mut promised = self.promised.lock().await;
+                    if promised.0 <= from.0 {
+                        *promised = from;
+                        let msg = NetworkMsg{
+                            from: *self.id.read().await,
+                            msg: Message::Promise{
+                                round,
+                                accepted: self.accepted.lock().await.clone(),
+                                peers: self.peers.read().await.values().map(|p| p.to_owned()).collect(),
+                            },
+                        };
+                        self.internal_send(from, msg).await;
+                    }
                 },
-                Message::GetPeers => {
-                    self.send_peers(from).await;
-                },
-                Message::Peers(peers) => {
+                Message::Promise{round, peers, accepted} => {
+                    if round == *self.round.lock().await {
+                        *self.promises.lock().await += 1;
+                    }
+                    if accepted.is_some() {
+                        *self.proposal.lock().await = accepted;
+                    }
                     let mut my_peers = self.peers.write().await;
                     for peer in peers {
-                        if peer.id != self.my_id {
+                        if peer.id != *self.id.read().await {
                             my_peers.insert(peer.id, peer);
                         }
                     }
                 },
+                Message::Propose{round, proposal} => {
+                    if self.promised.lock().await.0 <= from.0 {
+                        *self.accepted.lock().await = Some(proposal);
+                        let msg = NetworkMsg{
+                            from: *self.id.read().await,
+                            msg: Message::Accept{ round },
+                        };
+                        self.internal_send(from, msg).await;
+                    }
+                },
+                Message::Accept{round} => {
+                    if round == *self.round.lock().await {
+                        *self.acceptances.lock().await += 1;
+                    }
+                },
+                Message::Decide{round, proposal} => {
+                    *self.promised.lock().await = NodeId(0);
+                    *self.accepted.lock().await = None;
+                    self.peers.write().await.insert(proposal.id, proposal);
+                    self.internal_send(from, NetworkMsg{
+                        from: *self.id.read().await,
+                        msg: Message::Accept{ round },
+                    }).await;
+                },
+                // Message::Join => {
+                //     self.send_peers(from).await;
+                //     let msg = NetworkMsg{
+                //         from: self.id,
+                //         msg: Message::<T>::Peers(vec![Peer{id: from, addr}]),
+                //     };
+                //     self.broadcast(msg).await;
+                // },
+                // Message::GetPeers => {
+                //     self.send_peers(from).await;
+                // },
+                // Message::Peers(peers) => {
+                //     let mut my_peers = self.peers.write().await;
+                //     for peer in peers {
+                //         if peer.id != self.id {
+                //             my_peers.insert(peer.id, peer);
+                //         }
+                //     }
+                // },
             }
         }
         Ok(())
