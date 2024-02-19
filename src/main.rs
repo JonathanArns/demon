@@ -19,6 +19,31 @@ mod core;
 /// networking, cluster membership?
 mod network;
 
-fn main() {
-    println!("Hello, world!");
+use core::Message;
+use std::{time::Duration, env};
+use network::{NodeId, Network};
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref CLUSTER_ADDR: Option<String> = env::args().skip(1).next();
+}
+
+async fn handle_msg(from: NodeId, msg: Message) {
+    println!("{:?}: {:?}", from, msg);
+}
+
+#[tokio::main]
+async fn main() {
+    let network = Network::<Message, _, _>::new(handle_msg).await;
+    if let Some(ref addr) = *CLUSTER_ADDR {
+        network.connect(addr).await.unwrap();
+    }
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        for peer in network.peers().await {
+            network.send(peer, Message::Gossip).await;
+        }
+    }
 }
