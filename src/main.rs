@@ -35,10 +35,7 @@ async fn handle_msg(from: NodeId, msg: Message) {
 
 #[tokio::main]
 async fn main() {
-    let network = Network::<Message, _, _>::new(handle_msg).await;
-    if let Some(ref addr) = *CLUSTER_ADDR {
-        network.connect(addr).await.unwrap();
-    }
+    let network = Network::<Message, _, _>::connect(CLUSTER_ADDR.clone(), handle_msg).await.unwrap();
 
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;

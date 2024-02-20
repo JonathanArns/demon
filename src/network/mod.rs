@@ -2,7 +2,7 @@ use std::{collections::HashMap, net::{SocketAddr, IpAddr}, sync::Arc, time::Dura
 
 use anyhow::bail;
 use tokio::{net::{TcpListener, tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream, ToSocketAddrs, lookup_host}, sync::{Mutex, RwLock}};
-use tokio_util::codec::{LengthDelimitedCodec, FramedWrite, FramedRead};
+use tokio_util::{codec::{LengthDelimitedCodec, FramedWrite, FramedRead}, bytes::Bytes};
 use futures::{Future, SinkExt, TryStreamExt};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
@@ -28,10 +28,16 @@ struct NetworkMsg<T> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message<T> {
+    /// A payload message by the application.
     Payload(T),
+    /// A join request by a new node.
     Join,
-    GetPeers,
+    /// The unique ID assigned to a newly joined node by the root node 1.
+    AssignId(NodeId),
+    /// Information about peers' addresses in the network.
     Peers(Vec<Peer>),
+    /// The number of peers this node knows.
+    AckPeers(u32),
 }
 
 /// A network abstraction that asynchronously sends messages between peers.
@@ -68,31 +74,41 @@ where
     F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
     FUT: 'static + Future<Output = ()> + Send,
 {
-    /// Creates and starts the local network instance.
+    /// Creates and connects the local network instance.
     /// Handles to this instance should be created with `clone`.
-    pub async fn new(msg_handler: F) -> Self {
-        let id = NodeId(rand::random());
-        let network = Self {inner: Arc::new(NetworkInner::new(id, msg_handler).await)};
+    ///
+    /// The first node in a cluster should be created with `addrs = None`, all subsequent nodes
+    /// should connect to that root node to join the cluster.
+    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, msg_handler: F) -> anyhow::Result<Self> {
+        let network = Self {inner: Arc::new(NetworkInner::new(NodeId(0), msg_handler).await)};
         tokio::task::spawn(network.inner.clone().listen());
-        tokio::task::spawn(network.inner.clone().chatter());
         tokio::task::spawn(network.inner.clone().send_loop());
-        network
-    }
 
-    /// Connects this node to an existing cluster.
-    /// Can be called with the address of any existing node in the cluster.
-    pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> anyhow::Result<()> {
-        for addr in lookup_host(addrs).await? {
-            let r = self.inner.clone().connect(addr.ip()).await;
-            if r.is_err() {
-                continue
+        if let Some(addrs) = addrs {
+            for addr in lookup_host(addrs).await? {
+                let r = network.inner.clone().connect(addr.ip()).await;
+                if r.is_err() {
+                    continue
+                }
+                let join_msg: Bytes = bincode::serialize(&NetworkMsg{from: NodeId(0), msg: Message::<T>::Join}).unwrap().into();
+                network.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(join_msg.clone()).await?;
+                // retry until we are assigned an ID
+                loop {
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    if *network.inner.id.read().await != NodeId(0) {
+                        break
+                    } else {
+                        network.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(join_msg.clone()).await?;
+                    }
+                }
+                return Ok(network)
             }
-            self.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(
-                bincode::serialize(&NetworkMsg{from: self.inner.my_id, msg: Message::<T>::Join}).unwrap().into()
-            ).await?;
-            return Ok(())
+            bail!("could not connect to cluster");
+        } else {
+            *network.inner.id.write().await = NodeId(1);
+            tokio::task::spawn(network.inner.clone().root_only_loop());
         }
-        bail!("could not connect to cluster")
+        Ok(network)
     }
 
     /// Get a list of currently known peers.
@@ -104,11 +120,6 @@ where
     pub async fn send(&self, to: NodeId, msg: T) {
         self.inner.send(to, msg).await
     }
-
-    /// Send buffered outgoing messages.
-    pub async fn flush(&self) -> anyhow::Result<()> {
-        self.inner.clone().flush().await
-    }
 }
 
 pub struct NetworkInner<T, F, FUT>
@@ -117,11 +128,14 @@ where
     F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
     FUT: 'static + Future<Output = ()> + Send,
 {
-    my_id: NodeId,
+    id: RwLock<NodeId>,
     peers: RwLock<HashMap<NodeId, Peer>>,
     streams: Mutex<HashMap<IpAddr, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
     outgoing_buffer: Mutex<Vec<(NodeId, NetworkMsg<T>)>>,
     handler: F,
+
+    /// root node state
+    acked_peers: Mutex<HashMap<NodeId, u32>>,
 }
 
 impl<T, F, FUT> NetworkInner<T, F, FUT>
@@ -137,18 +151,19 @@ where
 
     async fn new(id: NodeId, msg_handler: F) -> Self {
         Self {
-            my_id: id,
+            id: RwLock::new(id),
             peers: Default::default(),
-
             streams: Default::default(),
             outgoing_buffer: Default::default(),
             handler: msg_handler,
+
+            acked_peers: Default::default(),
         }
     }
 
     /// Wraps and buffers an outgoing message for sending.
     async fn send(&self, to: NodeId, msg: T) {
-        self.internal_send(to, NetworkMsg{from: self.my_id, msg: Message::Payload(msg)}).await
+        self.internal_send(to, NetworkMsg{from: *self.id.read().await, msg: Message::Payload(msg)}).await
     }
 
     /// Buffers an outgoing message for sending.
@@ -161,7 +176,7 @@ where
         if let Some(Peer{addr, ..}) = self.peers.read().await.get(&id) {
             Ok(*addr)
         } else {
-            todo!("perform remote lookup")
+            bail!("unknown peer")
         }
     }
 
@@ -211,34 +226,20 @@ where
         }
     }
 
-    /// We gossip our peers in a ring, so eventually everyone knows everyone.
-    async fn chatter(self: Arc<Self>) {
+    /// A loop only to be run on the root node.
+    /// Ensures that all other peers eventually know each other.
+    async fn root_only_loop(self: Arc<Self>) {
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-
-            // find the peer to talk to
-            let mut next_peer = NodeId(u32::MAX);
-            let mut smallest_peer = NodeId(u32::MAX);
-            for peer in self.peers.read().await.keys() {
-                if peer.0 > self.my_id.0 && peer.0 < next_peer.0 {
-                    next_peer = *peer;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            let peers: Vec<Peer> = self.peers.read().await.values().map(|p| p.to_owned()).collect();
+            let num_peers = peers.len();
+            let msg = NetworkMsg{from: *self.id.read().await, msg: Message::<T>::Peers(peers)};
+            let mut buf = self.outgoing_buffer.lock().await;
+            for (id, num) in self.acked_peers.lock().await.iter() {
+                if (*num as usize) < num_peers {
+                    buf.push((*id, msg.clone()));
                 }
-                if peer.0 < smallest_peer.0 {
-                    smallest_peer = *peer;
-                }
-                // self.send_peers(*peer).await;
             }
-
-            if next_peer.0 != u32::MAX {
-                self.send_peers(next_peer).await;
-            } else if smallest_peer.0 != u32::MAX {
-                self.send_peers(smallest_peer).await;
-            }
-
-            // // alternative: just broadcast
-            // for peer in self.peers.read().await.keys() {
-            //     self.send_peers(*peer).await;
-            // }
         }
     }
 
@@ -253,56 +254,71 @@ where
         Ok(())
     }
 
-    /// Sends `to` a list of known peers.
-    async fn send_peers(&self, to: NodeId) {
+    async fn broadcast_peers(&self) {
         let peers = self.peers.read().await.values().map(|p| p.to_owned()).collect();
-        let msg = NetworkMsg{from: self.my_id, msg: Message::Peers(peers)};
-        self.internal_send(to, msg).await;
-    }
-
-    /// Sends `msg` to all known peers.
-    async fn broadcast(&self, msg: NetworkMsg<T>) {
-        for peer_id in self.peers.read().await.keys() {
-            self.internal_send(*peer_id, msg.clone()).await;
+        let msg = NetworkMsg{from: *self.id.read().await, msg: Message::Peers(peers)};
+        for id in self.peers.read().await.keys() {
+            self.outgoing_buffer.lock().await.push((*id, msg.clone()));
         }
     }
 
+    /// Handles the receiver half of a TCP stream.
     async fn handle_read_half(
         self: Arc<Self>,
         mut reader: FramedRead<OwnedReadHalf, LengthDelimitedCodec>,
-        addr: IpAddr,
+        peer_addr: IpAddr,
         handler: F,
     ) -> anyhow::Result<()> {
-        let mut known_peer = false;
         while let Some(data) = reader.try_next().await? {
             let NetworkMsg::<T>{ from, msg } = bincode::deserialize(&data).unwrap();
-            if !known_peer {
-                self.peers.write().await.insert(from, Peer {id: from, addr});
-                known_peer = true;
-            }
             match msg {
                 Message::Payload(msg) => {
                     let handle_fn = handler.clone();
                     tokio::task::spawn(async move { handle_fn(from, msg).await });
                 },
                 Message::Join => {
-                    self.send_peers(from).await;
-                    let msg = NetworkMsg{
-                        from: self.my_id,
-                        msg: Message::<T>::Peers(vec![Peer{id: from, addr}]),
-                    };
-                    self.broadcast(msg).await;
+                    // only handle if we are the root node
+                    if *self.id.read().await == NodeId(1) {
+                        let mut new_id;
+                        {
+                            let mut peers = self.peers.write().await;
+                            new_id = NodeId(peers.len() as u32 + 2);
+                            for Peer{id, addr} in peers.values() {
+                                if *addr == peer_addr {
+                                    new_id = *id;
+                                }
+                            }
+                            peers.insert(new_id, Peer{id: new_id, addr: peer_addr});
+                        }
+                        self.acked_peers.lock().await.insert(new_id, 0);
+                        let msg = NetworkMsg{
+                            from: NodeId(1),
+                            msg: Message::<T>::AssignId(new_id),
+                        };
+                        self.internal_send(new_id, msg).await;
+                        self.broadcast_peers().await;
+                    }
                 },
-                Message::GetPeers => {
-                    self.send_peers(from).await;
+                Message::AssignId(id) => {
+                    self.peers.write().await.insert(from, Peer{id: from, addr: peer_addr});
+                    *self.id.write().await = id;
                 },
                 Message::Peers(peers) => {
                     let mut my_peers = self.peers.write().await;
+                    let my_id = *self.id.read().await;
                     for peer in peers {
-                        if peer.id != self.my_id {
+                        if peer.id != my_id {
                             my_peers.insert(peer.id, peer);
                         }
                     }
+                    let msg = NetworkMsg{
+                        from: *self.id.read().await,
+                        msg: Message::AckPeers(my_peers.len() as u32),
+                    };
+                    self.internal_send(from, msg).await;
+                },
+                Message::AckPeers(num_ack) => {
+                    self.acked_peers.lock().await.insert(from, num_ack);
                 },
             }
         }
