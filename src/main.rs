@@ -18,6 +18,7 @@ mod core;
 
 /// networking, cluster membership?
 mod network;
+mod demon;
 
 use core::Message;
 use std::{time::Duration, env};
@@ -35,12 +36,12 @@ async fn handle_msg(from: NodeId, msg: Message) {
 
 #[tokio::main]
 async fn main() {
-    let network = Network::<Message, _, _>::connect(CLUSTER_ADDR.clone(), handle_msg).await.unwrap();
+    // let network = Network::<Message, _, _>::connect(CLUSTER_ADDR.clone(), handle_msg).await.unwrap();
 
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        for peer in network.peers().await {
-            network.send(peer, Message::Gossip).await;
-        }
-    }
+    // loop {
+    //     tokio::time::sleep(Duration::from_secs(1)).await;
+    //     for peer in network.peers().await {
+    //         network.send(peer, Message::Gossip).await;
+    //     }
+    // }
 }

@@ -1,7 +1,8 @@
 use std::{collections::HashMap, net::{SocketAddr, IpAddr}, sync::Arc, time::Duration};
 
 use anyhow::bail;
-use tokio::{net::{TcpListener, tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream, ToSocketAddrs, lookup_host}, sync::{Mutex, RwLock}};
+use async_trait::async_trait;
+use tokio::{net::{TcpListener, tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream, ToSocketAddrs, lookup_host}, sync::{Mutex, RwLock, OnceCell}};
 use tokio_util::{codec::{LengthDelimitedCodec, FramedWrite, FramedRead}, bytes::Bytes};
 use futures::{Future, SinkExt, TryStreamExt};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
@@ -40,26 +41,30 @@ enum Message<T> {
     AckPeers(u32),
 }
 
+/// Handles incoming payload messages from the network.
+#[async_trait]
+pub trait MsgHandler<T>: Send + Sync + 'static {
+    async fn handle_msg(&self, from: NodeId, msg: T);
+}
+
 /// A network abstraction that asynchronously sends messages between peers.
 /// Received messages are handled as incoming events.
 ///
 /// Routing etc is handled transparently.
 ///
 /// Network handles an `Arc` internally, so it is safe to clone and share between threads.
-pub struct Network<T, F, FUT>
+pub struct Network<T, H>
 where
     T: 'static + Serialize + DeserializeOwned + Send + Sync + Clone,
-    F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
-    FUT: 'static + Future<Output = ()> + Send,
+    H: MsgHandler<T>,
 {
-    inner: Arc<NetworkInner<T, F, FUT>>,
+    inner: Arc<NetworkInner<T, H>>,
 }
 
-impl<T, F, FUT> Clone for Network<T, F, FUT>
+impl<T, H> Clone for Network<T, H>
 where
     T: 'static + Serialize + DeserializeOwned + Send + Sync + Clone,
-    F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
-    FUT: 'static + Future<Output = ()> + Send,
+    H: MsgHandler<T>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -68,18 +73,17 @@ where
     }
 }
 
-impl<T, F, FUT> Network<T, F, FUT>
+impl<T, H> Network<T, H>
 where
     T: 'static + Serialize + DeserializeOwned + Send + Sync + Clone,
-    F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
-    FUT: 'static + Future<Output = ()> + Send,
+    H: MsgHandler<T>,
 {
     /// Creates and connects the local network instance.
     /// Handles to this instance should be created with `clone`.
     ///
     /// The first node in a cluster should be created with `addrs = None`, all subsequent nodes
     /// should connect to that root node to join the cluster.
-    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, msg_handler: F) -> anyhow::Result<Self> {
+    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, msg_handler: Arc<OnceCell<Arc<H>>>) -> anyhow::Result<Self> {
         let network = Self {inner: Arc::new(NetworkInner::new(NodeId(0), msg_handler).await)};
         tokio::task::spawn(network.inner.clone().listen());
         tokio::task::spawn(network.inner.clone().send_loop());
@@ -122,34 +126,32 @@ where
     }
 }
 
-pub struct NetworkInner<T, F, FUT>
+pub struct NetworkInner<T, H>
 where
     T: 'static + Serialize + DeserializeOwned + Send + Sync + Clone,
-    F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
-    FUT: 'static + Future<Output = ()> + Send,
+    H: MsgHandler<T>,
 {
     id: RwLock<NodeId>,
     peers: RwLock<HashMap<NodeId, Peer>>,
     streams: Mutex<HashMap<IpAddr, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
     outgoing_buffer: Mutex<Vec<(NodeId, NetworkMsg<T>)>>,
-    handler: F,
+    handler: Arc<OnceCell<Arc<H>>>,
 
     /// root node state
     acked_peers: Mutex<HashMap<NodeId, u32>>,
 }
 
-impl<T, F, FUT> NetworkInner<T, F, FUT>
+impl<T, H> NetworkInner<T, H>
 where
     T: 'static + Serialize + DeserializeOwned + Send + Sync + Clone,
-    F: 'static + Send + Sync + Clone + Fn(NodeId, T) -> FUT,
-    FUT: 'static + Future<Output = ()> + Send,
+    H: MsgHandler<T>,
 {
     /// The codec we use for framing all messages.
     fn codec() -> LengthDelimitedCodec {
         LengthDelimitedCodec::new()
     }
 
-    async fn new(id: NodeId, msg_handler: F) -> Self {
+    async fn new(id: NodeId, msg_handler: Arc<OnceCell<Arc<H>>>) -> Self {
         Self {
             id: RwLock::new(id),
             peers: Default::default(),
@@ -247,9 +249,9 @@ where
         let (reader, writer) = stream.into_split();
         let framed_writer = FramedWrite::new(writer, Self::codec());
         let framed_reader = FramedRead::new(reader, Self::codec());
-        let handle_fn = self.handler.clone();
+        let msg_handler = self.handler.clone();
         let network_handle = self.clone();
-        tokio::task::spawn(async move { network_handle.handle_read_half(framed_reader, peer_addr, handle_fn).await });
+        tokio::task::spawn(async move { network_handle.handle_read_half(framed_reader, peer_addr, msg_handler).await });
         self.streams.lock().await.insert(peer_addr, framed_writer);
         Ok(())
     }
@@ -267,14 +269,16 @@ where
         self: Arc<Self>,
         mut reader: FramedRead<OwnedReadHalf, LengthDelimitedCodec>,
         peer_addr: IpAddr,
-        handler: F,
+        handler: Arc<OnceCell<Arc<H>>>,
     ) -> anyhow::Result<()> {
         while let Some(data) = reader.try_next().await? {
             let NetworkMsg::<T>{ from, msg } = bincode::deserialize(&data).unwrap();
             match msg {
                 Message::Payload(msg) => {
-                    let handle_fn = handler.clone();
-                    tokio::task::spawn(async move { handle_fn(from, msg).await });
+                    if let Some(handler) = handler.get() {
+                        let msg_handler = handler.clone();
+                        tokio::task::spawn(async move { msg_handler.handle_msg(from, msg).await });
+                    }
                 },
                 Message::Join => {
                     // only handle if we are the root node
