@@ -16,3 +16,5 @@ lazy_static = "1.4"
 rand = "0.8"
 axum = "0.7"
 async-trait = "0.1"
+omnipaxos = { version = "0.2.2", features = ["serde", "batch_accept"] }
+omnipaxos_storage = "0.2.2"

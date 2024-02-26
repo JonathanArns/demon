@@ -4,7 +4,7 @@ use anyhow::bail;
 use async_trait::async_trait;
 use tokio::{net::{TcpListener, tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream, ToSocketAddrs, lookup_host}, sync::{Mutex, RwLock, OnceCell}};
 use tokio_util::{codec::{LengthDelimitedCodec, FramedWrite, FramedRead}, bytes::Bytes};
-use futures::{Future, SinkExt, TryStreamExt};
+use futures::{SinkExt, TryStreamExt};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
 
@@ -115,14 +115,38 @@ where
         Ok(network)
     }
 
+    pub async fn my_id(&self) -> NodeId {
+        *self.inner.id.read().await
+    }
+
     /// Get a list of currently known peers.
     pub async fn peers(&self) -> Vec<NodeId> {
         self.inner.peers.read().await.keys().map(|k| k.to_owned()).collect()
     }
 
+    /// Get a list of currently known nodes, this includes self, as opposed to `peers()`.
+    pub async fn nodes(&self) -> Vec<NodeId> {
+        let mut nodes = self.peers().await;
+        nodes.push(self.my_id().await);
+        nodes
+    }
+
     /// Buffers an outgoing message for sending.
     pub async fn send(&self, to: NodeId, msg: T) {
         self.inner.send(to, msg).await
+    }
+
+    /// Buffers an outgoing message for sending.
+    pub async fn send_batch(&self, messages: Vec<(NodeId, T)>) {
+        let my_id = self.my_id().await;
+        let msgs = messages.into_iter().map(|(to, msg)| {
+            let msg = NetworkMsg{
+                from: my_id,
+                msg: Message::Payload(msg),
+            };
+            (to, msg)
+        });
+        self.inner.outgoing_buffer.lock().await.extend(msgs);
     }
 }
 
