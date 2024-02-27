@@ -83,7 +83,7 @@ where
     ///
     /// The first node in a cluster should be created with `addrs = None`, all subsequent nodes
     /// should connect to that root node to join the cluster.
-    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, msg_handler: Arc<OnceCell<Arc<H>>>) -> anyhow::Result<Self> {
+    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, msg_handler: Arc<OnceCell<Arc<H>>>) -> anyhow::Result<Self> {
         let network = Self {inner: Arc::new(NetworkInner::new(NodeId(0), msg_handler).await)};
         tokio::task::spawn(network.inner.clone().listen());
         tokio::task::spawn(network.inner.clone().send_loop());
@@ -111,6 +111,13 @@ where
         } else {
             *network.inner.id.write().await = NodeId(1);
             tokio::task::spawn(network.inner.clone().root_only_loop());
+        }
+        // wait until the whole cluster is connected
+        loop {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if network.nodes().await.len() as u32 == cluster_size {
+                break
+            }
         }
         Ok(network)
     }

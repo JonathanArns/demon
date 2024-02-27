@@ -4,13 +4,13 @@ services:
     container_name: bob
     hostname: bob
     build: .
-    command: demon
+    command: demon 3
 
   alice:
     container_name: alice
     hostname: alice
     build: .
-    command: demon bob:1234
+    command: demon 3 bob:1234
     environment:
       RUST_BACKTRACE: 1
     depends_on:
@@ -20,6 +20,6 @@ services:
     container_name: fabi
     hostname: fabi
     build: .
-    command: demon bob:1234
+    command: demon 3 bob:1234
     depends_on:
       - bob

@@ -2,7 +2,7 @@ use crate::{gossip::{GossipEvent, GossipMsg, Gossiper}, network::{MsgHandler, Ne
 use async_trait::async_trait;
 use futures::Future;
 use serde::{Serialize, Deserialize};
-use tokio::{select, sync::{mpsc::Receiver, OnceCell}};
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, OnceCell}};
 use std::{sync::Arc, pin::Pin};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -43,9 +43,9 @@ impl MsgHandler<Message> for DeMon {
 
 impl DeMon {
     /// Creates and starts a new DeMon node.
-    pub async fn new() -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32) -> Arc<Self> {
         let demon_cell = Arc::new(OnceCell::const_new());
-        let network = Network::connect::<String>(None, demon_cell.clone()).await.unwrap();
+        let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let (gossiper, gossip_events) = Gossiper::new(network.clone()).await;
         let demon = demon_cell.get_or_init(|| async move {

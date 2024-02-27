@@ -20,28 +20,19 @@ mod core;
 mod network;
 mod demon;
 
-use core::Message;
-use std::{time::Duration, env};
-use network::{NodeId, Network};
+use std::{env, time::Duration};
+use demon::DeMon;
 
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref CLUSTER_ADDR: Option<String> = env::args().skip(1).next();
-}
-
-async fn handle_msg(from: NodeId, msg: Message) {
-    println!("{:?}: {:?}", from, msg);
+    static ref CLUSTER_SIZE: u32 = env::args().skip(1).next().map(|s| s.parse::<u32>().unwrap()).unwrap();
+    static ref CLUSTER_ADDR: Option<String> = env::args().skip(2).next();
 }
 
 #[tokio::main]
 async fn main() {
-    // let network = Network::<Message, _, _>::connect(CLUSTER_ADDR.clone(), handle_msg).await.unwrap();
-
-    // loop {
-    //     tokio::time::sleep(Duration::from_secs(1)).await;
-    //     for peer in network.peers().await {
-    //         network.send(peer, Message::Gossip).await;
-    //     }
-    // }
+    let demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE).await;
+    println!("instantiated demon");
+    tokio::time::sleep(Duration::from_secs(5)).await;
 }
