@@ -17,6 +17,12 @@ impl Snapshot {
         }
         Self { vec: vector }
     }
+
+    pub fn merge_inplace(&mut self, other: &Self) {
+        for i in 0..self.vec.len() {
+            self.vec[i] = self.vec[i].max(other.vec[i]);
+        }
+    }
 }
 
 pub trait Operation {
@@ -32,20 +38,30 @@ pub struct Transaction<O: Operation> {
     snapshot: Snapshot,
 }
 
+/// A deterministic in-memory storage layer, that combines weak and strong operations.
+///
+/// TODO: make this storage thread-safe or something
 pub struct Storage<O: Operation>{
-    weak_logs: HashMap<NodeId, Vec<O>>,
-    transactions: Vec<Transaction<O>>,
+    /// The weak operation logs (offset, log)
+    weak_logs: HashMap<NodeId, (usize, Vec<O>)>,
+    /// The snapshot that the latest transaction was executed on.
+    /// weak_logs may be truncated up to this snapshot, because we will never
+    /// need to re-execute anything before this snapshot.
+    latest_transaction_snapshot: Snapshot,
+    /// The state at the latest transaction snapshot.
+    latest_transaction_snapshot_state: O::State,
 }
 
 impl<O: Operation> Storage<O> {
     pub fn new(nodes: Vec<NodeId>) -> Self {
         let mut weak_logs = HashMap::new();
-        for id in nodes {
-            weak_logs.insert(id, vec![]);
+        for id in &nodes {
+            weak_logs.insert(*id, (0, vec![]));
         }
         Self {
             weak_logs,
-            transactions: vec![],
+            latest_transaction_snapshot: Snapshot{vec: vec![0; nodes.len()]},
+            latest_transaction_snapshot_state: O::State::default(),
         }
     }
 
@@ -53,11 +69,19 @@ impl<O: Operation> Storage<O> {
         todo!()
     }
 
-    pub fn exec_weak(&mut self, op: O) -> Option<O::ReadVal> {
+    /// Stores a weak operation, without computing a possible result.
+    pub fn store_weak(&mut self, op: O, from: NodeId) {
+        self.weak_logs.get_mut(&from).unwrap().1.push(op);
+    }
+
+    /// Stores and executes a weak operation, returning a possible result.
+    pub fn exec_weak(&mut self, op: O, from: NodeId) -> Option<O::ReadVal> {
         todo!()
     }
 
+    /// Stores and executes a transaction, returning possible read values.
     pub fn exec_transaction(&mut self, t: Transaction<O>) -> Vec<O::ReadVal> {
+        self.latest_transaction_snapshot.merge_inplace(&t.snapshot);
         todo!()
     }
 }
