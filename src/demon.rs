@@ -1,14 +1,31 @@
-use crate::{gossip::{GossipEvent, GossipMsg, Gossiper}, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent, SequencerMsg}};
+use crate::{gossip::{GossipEvent, Gossiper}, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}};
 use async_trait::async_trait;
 use futures::Future;
 use serde::{Serialize, Deserialize};
 use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, OnceCell}};
 use std::{sync::Arc, pin::Pin};
+use omnipaxos::storage::{Entry, NoSnapshot};
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+
+}
+
+impl Entry for Transaction {
+    type Snapshot = NoSnapshot;
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Message {
-    Sequencer(SequencerMsg),
-    Gossiper(GossipMsg),
+pub enum Component {
+    Sequencer,
+    Gossiper,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub payload: Vec<u8>,
+    pub component: Component,
 }
 
 /// A helper trait that we need to make rustc happy
@@ -20,7 +37,7 @@ trait AsyncMsgHandler: Clone + FnOnce(NodeId, Message) -> Pin<Box<dyn Send + Fut
 /// DeMon is `Sync` however, and never requires mutable access, so an `Arc<DeMon>` will do the trick.
 pub struct DeMon {
     network: Network<Message, Self>,
-    sequencer: Sequencer,
+    sequencer: Sequencer<Transaction>,
     gossiper: Gossiper,
 }
 
@@ -30,12 +47,12 @@ pub struct DeMon {
 #[async_trait]
 impl MsgHandler<Message> for DeMon {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
-        match msg {
-            Message::Sequencer(m) => {
-                self.sequencer.handle_msg(m).await;
+        match msg.component {
+            Component::Sequencer => {
+                self.sequencer.handle_msg(msg.payload).await;
             },
-            Message::Gossiper(m) => {
-                self.gossiper.handle_msg(from, m).await;
+            Component::Gossiper => {
+                self.gossiper.handle_msg(from, msg.payload).await;
             }
         }
     }

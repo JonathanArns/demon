@@ -2,23 +2,15 @@ use std::{ops::RangeBounds, sync::Arc, time::Duration};
 
 use omnipaxos::{messages::Message as PaxosMessage, storage::{Entry, NoSnapshot}, util::LogEntry, ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
 use omnipaxos_storage::memory_storage::MemoryStorage;
-use serde::{Serialize, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
 
-use crate::{demon::{DeMon, Message}, network::{Network, NodeId}};
+use crate::{demon::{Component, DeMon, Message}, network::{Network, NodeId}};
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-
-}
-
-impl Entry for Transaction {
-    type Snapshot = NoSnapshot;
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SequencerMsg {
-    Omnipaxos(PaxosMessage<Transaction>)
+enum SequencerMsg<T: Entry> {
+    Omnipaxos(PaxosMessage<T>)
 }
 
 #[derive(Debug, Clone)]
@@ -28,14 +20,22 @@ pub enum SequencerEvent {
 }
 
 /// A transaction sequencer that creates a replicated log of transactions.
-pub struct Sequencer {
-    omnipaxos: Arc<Mutex<OmniPaxos<Transaction, MemoryStorage<Transaction>>>>,
+pub struct Sequencer<T>
+where
+    T: Entry + Serialize + DeserializeOwned + Send + 'static,
+    T::Snapshot: Send,
+{
+    omnipaxos: Arc<Mutex<OmniPaxos<T, MemoryStorage<T>>>>,
     network: Network<Message, DeMon>,
     event_sender: Sender<SequencerEvent>,
     decided_idx: Arc<Mutex<u64>>,
 }
 
-impl Clone for Sequencer {
+impl<T> Clone for Sequencer<T>
+where
+    T: Entry + Serialize + DeserializeOwned + Send + 'static,
+    T::Snapshot: Send,
+{
     fn clone(&self) -> Self {
         Self {
             omnipaxos: self.omnipaxos.clone(),
@@ -46,7 +46,11 @@ impl Clone for Sequencer {
     }
 }
 
-impl Sequencer {
+impl<T> Sequencer<T>
+where
+    T: Entry + Serialize + DeserializeOwned + Send + 'static,
+    T::Snapshot: Send,
+{
     pub async fn new(network: Network<Message, DeMon>) -> (Self, Receiver<SequencerEvent>) {
         let configuration_id = 1;
         let server_config = ServerConfig {
@@ -75,7 +79,8 @@ impl Sequencer {
     }
 
     /// Handle an incoming message.
-    pub async fn handle_msg(&self, msg: SequencerMsg) {
+    pub async fn handle_msg(&self, data: Vec<u8>) {
+        let msg: SequencerMsg<T> = bincode::deserialize(&data).unwrap();
         match msg {
             SequencerMsg::Omnipaxos(m) => {
                 let mut latch = self.omnipaxos.lock().await;
@@ -92,14 +97,14 @@ impl Sequencer {
     }
 
     /// Schedules a new transaction for sequencing, so that it will eventually be decided.
-    pub async fn append(&self, transaction: Transaction) {
+    pub async fn append(&self, transaction: T) {
         self.omnipaxos.lock().await.append(transaction).unwrap();
     }
 
     /// Read decided transactions in a range from the log.
     /// This might return fewer entries than the range's length, for example if some entries are
     /// not decided yet, or if there are omnipaxos internal entries there.
-    pub async fn read<R: RangeBounds<u64>>(&self, range: R) -> Vec<Transaction> {
+    pub async fn read<R: RangeBounds<u64>>(&self, range: R) -> Vec<T> {
         if let Some(entries) = self.omnipaxos.lock().await.read_entries(range) {
             entries.into_iter().filter(|e| {
                 match e {
@@ -126,7 +131,7 @@ impl Sequencer {
             let mut latch = self.omnipaxos.lock().await;
             latch.tick();
             let messages = latch.outgoing_messages().into_iter().map(|m| {
-                (NodeId(m.get_receiver() as u32), Message::Sequencer(SequencerMsg::Omnipaxos(m)))
+                (NodeId(m.get_receiver() as u32), Message{payload: bincode::serialize(&SequencerMsg::<T>::Omnipaxos(m)).unwrap(), component: Component::Sequencer})
             }).collect::<Vec<_>>();
             self.network.send_batch(messages).await;
         }
