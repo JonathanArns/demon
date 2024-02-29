@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::network::NodeId;
 
 pub mod counters;
 
 /// A snapshot identifier that enables processes to construct the snapshot
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
-    vec: Vec<u64>,
+    pub vec: Vec<u64>,
 }
 
 impl Snapshot {
@@ -31,6 +34,13 @@ pub trait Operation {
 
     fn is_weak(&self) -> bool;
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaggedOperation<O: Operation> {
+    pub node: NodeId,
+    pub idx: u64,
+    pub op: O,
 }
 
 pub struct Transaction<O: Operation> {
@@ -70,12 +80,13 @@ impl<O: Operation> Storage<O> {
     }
 
     /// Stores a weak operation, without computing a possible result.
-    pub fn store_weak(&mut self, op: O, from: NodeId) {
-        self.weak_logs.get_mut(&from).unwrap().1.push(op);
+    pub fn store_weak(&mut self, op: TaggedOperation<O>) {
+        self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
     }
 
     /// Stores and executes a weak operation, returning a possible result.
-    pub fn exec_weak(&mut self, op: O, from: NodeId) -> Option<O::ReadVal> {
+    pub fn exec_weak(&mut self, op: TaggedOperation<O>) -> Option<O::ReadVal> {
+        self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
         todo!()
     }
 

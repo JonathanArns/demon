@@ -1,4 +1,4 @@
-use crate::{gossip::{GossipEvent, Gossiper}, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}};
+use crate::{network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, TaggedOperation}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use futures::Future;
 use serde::{Serialize, Deserialize};
@@ -19,7 +19,7 @@ impl Entry for Transaction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Component {
     Sequencer,
-    Gossiper,
+    WeakReplication,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,7 +38,7 @@ trait AsyncMsgHandler: Clone + FnOnce(NodeId, Message) -> Pin<Box<dyn Send + Fut
 pub struct DeMon {
     network: Network<Message, Self>,
     sequencer: Sequencer<Transaction>,
-    gossiper: Gossiper,
+    weak_replication: WeakReplication<TaggedOperation<CounterOp>>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -51,8 +51,8 @@ impl MsgHandler<Message> for DeMon {
             Component::Sequencer => {
                 self.sequencer.handle_msg(msg.payload).await;
             },
-            Component::Gossiper => {
-                self.gossiper.handle_msg(from, msg.payload).await;
+            Component::WeakReplication => {
+                self.weak_replication.handle_msg(from, msg.payload).await;
             }
         }
     }
@@ -64,17 +64,17 @@ impl DeMon {
         let demon_cell = Arc::new(OnceCell::const_new());
         let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
-        let (gossiper, gossip_events) = Gossiper::new(network.clone()).await;
+        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let demon = demon_cell.get_or_init(|| async move {
             Arc::new(Self {
                 network,
                 sequencer,
-                gossiper,
+                weak_replication,
             })
         }).await.clone();
         tokio::task::spawn(demon.clone().event_loop(
             sequencer_events,
-            gossip_events,
+            weak_replication_events,
         ));
         demon
     }
@@ -83,14 +83,14 @@ impl DeMon {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent>,
-        mut gossip_events: Receiver<GossipEvent>,
+        mut weak_replication_events: Receiver<WeakEvent>,
     ) {
         loop {
             select! {
                 Some(e) = sequencer_events.recv() => {
                     todo!("execute decided transactions")
                 },
-                Some(e) = gossip_events.recv() => {
+                Some(e) = weak_replication_events.recv() => {
                     todo!("execute decided transactions")
                 },
             }

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::Operation;
 
 /// Prelim def of a key
@@ -7,7 +9,7 @@ pub type Key = u64;
 /// Prelim def of a stored Value
 pub type Value = i64;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CounterOp {
     /// weak
     Read{key: Key},
