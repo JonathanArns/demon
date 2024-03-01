@@ -1,8 +1,8 @@
-use crate::{network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, TaggedOperation}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Storage, TaggedOperation}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use futures::Future;
 use serde::{Serialize, Deserialize};
-use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, OnceCell}};
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, OnceCell, RwLock}};
 use std::{sync::Arc, pin::Pin};
 use omnipaxos::storage::{Entry, NoSnapshot};
 
@@ -37,8 +37,9 @@ trait AsyncMsgHandler: Clone + FnOnce(NodeId, Message) -> Pin<Box<dyn Send + Fut
 /// DeMon is `Sync` however, and never requires mutable access, so an `Arc<DeMon>` will do the trick.
 pub struct DeMon {
     network: Network<Message, Self>,
+    storage: Arc<RwLock<Storage<CounterOp>>>,
     sequencer: Sequencer<Transaction>,
-    weak_replication: WeakReplication<TaggedOperation<CounterOp>>,
+    weak_replication: WeakReplication<TaggedOperation<CounterOp>, Storage<CounterOp>>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -63,11 +64,13 @@ impl DeMon {
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32) -> Arc<Self> {
         let demon_cell = Arc::new(OnceCell::const_new());
         let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
+        let storage = Arc::new(RwLock::new(Storage::new(network.nodes().await)));
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
+        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone(), storage.clone()).await;
         let demon = demon_cell.get_or_init(|| async move {
             Arc::new(Self {
                 network,
+                storage,
                 sequencer,
                 weak_replication,
             })
@@ -83,7 +86,7 @@ impl DeMon {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent>,
-        mut weak_replication_events: Receiver<WeakEvent>,
+        mut weak_replication_events: Receiver<WeakEvent<TaggedOperation<CounterOp>>>,
     ) {
         loop {
             select! {

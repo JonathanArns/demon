@@ -155,6 +155,18 @@ where
         });
         self.inner.outgoing_buffer.lock().await.extend(msgs);
     }
+
+    pub async fn broadcast(&self, message: T) {
+        let peers = self.peers().await;
+        let msg = NetworkMsg{
+            from: self.my_id().await,
+            msg: Message::Payload(message),
+        };
+        let mut latch = self.inner.outgoing_buffer.lock().await;
+        for peer in peers {
+            latch.push((peer, msg.clone()));
+        }
+    }
 }
 
 pub struct NetworkInner<T, H>

@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::network::NodeId;
+use crate::{network::NodeId, weak_replication::{WeakLogEntry, WeakLogStorage}};
 
 pub mod counters;
 
 /// A snapshot identifier that enables processes to construct the snapshot
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
+    // /// (term, idx) per weak log
+    // pub vec: Vec<(u32, u64)>,
+    /// idx per weak log
     pub vec: Vec<u64>,
 }
 
@@ -26,10 +29,31 @@ impl Snapshot {
             self.vec[i] = self.vec[i].max(other.vec[i]);
         }
     }
+
+    /// Returns None if they are concurrent.
+    /// Returns Some(true) if self fully includes other.
+    pub fn greater(&self, other: &Self) -> Option<bool> {
+        let mut result = None;
+        for i in 0..self.vec.len() {
+            if self.vec[i] > other.vec[i] {
+                if result == Some(false) {
+                    return None
+                }
+                result = Some(true);
+            }
+            if self.vec[i] < other.vec[i] {
+                if result == Some(true) {
+                    return None
+                }
+                result = Some(false)
+            }
+        }
+        result
+    }
 }
 
-pub trait Operation {
-    type State: Default;
+pub trait Operation: Clone + Sync + Send + Serialize + DeserializeOwned + 'static {
+    type State: Default + Clone + Sync + Send;
     type ReadVal;
 
     fn is_weak(&self) -> bool;
@@ -37,10 +61,21 @@ pub trait Operation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaggedOperation<O: Operation> {
+pub struct TaggedOperation<O> {
     pub node: NodeId,
     pub idx: u64,
     pub op: O,
+}
+
+impl<O: Operation> WeakLogEntry for TaggedOperation<O> {
+    fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
+        if self.idx >= snapshot.vec[self.node.0 as usize] {
+            snapshot.vec[self.node.0 as usize] = self.idx;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 pub struct Transaction<O: Operation> {
@@ -51,7 +86,8 @@ pub struct Transaction<O: Operation> {
 /// A deterministic in-memory storage layer, that combines weak and strong operations.
 ///
 /// TODO: make this storage thread-safe or something
-pub struct Storage<O: Operation>{
+#[derive(Debug)]
+pub struct Storage<O: Operation> {
     /// The weak operation logs (offset, log)
     weak_logs: HashMap<NodeId, (usize, Vec<O>)>,
     /// The snapshot that the latest transaction was executed on.
@@ -93,6 +129,12 @@ impl<O: Operation> Storage<O> {
     /// Stores and executes a transaction, returning possible read values.
     pub fn exec_transaction(&mut self, t: Transaction<O>) -> Vec<O::ReadVal> {
         self.latest_transaction_snapshot.merge_inplace(&t.snapshot);
+        todo!()
+    }
+}
+
+impl<O: Operation> WeakLogStorage<TaggedOperation<O>> for Storage<O> {
+    fn read(&self, log: NodeId, from: u64) -> Vec<TaggedOperation<O>> {
         todo!()
     }
 }
