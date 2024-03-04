@@ -53,8 +53,9 @@ where
 {
     pub async fn new(network: Network<Message, DeMon>) -> (Self, Receiver<SequencerEvent>) {
         let configuration_id = 1;
+        let my_id = network.my_id().await;
         let server_config = ServerConfig {
-            pid: network.my_id().await.0.into(),
+            pid: my_id.0.into(),
             ..Default::default()
         };
         let cluster_config = ClusterConfig {

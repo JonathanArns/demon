@@ -1,9 +1,12 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Storage, TaggedOperation, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Snapshot, Storage, TaggedOperation, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, OnceCell, RwLock}};
+use tokio::{net::ToSocketAddrs, select, sync::{Mutex, mpsc::Receiver, OnceCell, RwLock}};
 use std::sync::Arc;
 
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct TransactionId(NodeId, u64);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Component {
@@ -26,6 +29,8 @@ pub struct DeMon {
     storage: Arc<RwLock<Storage<CounterOp>>>,
     sequencer: Sequencer<Transaction<CounterOp>>,
     weak_replication: WeakReplication<TaggedOperation<CounterOp>, Storage<CounterOp>>,
+    next_transaction_id: Arc<Mutex<TransactionId>>,
+    next_transaction_snapshot: Arc<RwLock<Snapshot>>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -53,12 +58,16 @@ impl DeMon {
         let storage = Arc::new(RwLock::new(Storage::new(network.nodes().await)));
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone(), storage.clone()).await;
+        let my_id = network.my_id().await;
+        let nodes = network.nodes().await;
         let demon = demon_cell.get_or_init(|| async move {
             Arc::new(Self {
                 network,
                 storage,
                 sequencer,
                 weak_replication,
+                next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
+                next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
             })
         }).await.clone();
         tokio::task::spawn(demon.clone().event_loop(
@@ -67,6 +76,19 @@ impl DeMon {
             api,
         ));
         demon
+    }
+
+    /// Generates a new globally unique transaction Id.
+    async fn generate_transaction_id(&self) -> TransactionId {
+        let mut latch = self.next_transaction_id.lock().await;
+        let id = *latch;
+        latch.1 += 1;
+        id
+    }
+
+    /// Chooses the snapshot for the next transaction proposed at this node.
+    async fn choose_transaction_snapshot(&self) -> Snapshot {
+        self.next_transaction_snapshot.read().await.clone()
     }
 
     /// Process events from the components.
@@ -80,9 +102,14 @@ impl DeMon {
         loop {
             select! {
                 Some((query, result_sender)) = weak_api_events.recv() => {
+                    // execute, send result, then replicate
                     todo!("")
                 },
                 Some((query, result_sender)) = strong_api_events.recv() => {
+                    // generate transaction ID, start task waiting for result, replicate, then execute
+                    let id = self.generate_transaction_id().await;
+                    let snapshot = self.choose_transaction_snapshot().await;
+                    let transaction = Transaction { id, snapshot, query };
                     todo!("")
                 },
                 Some(e) = sequencer_events.recv() => {

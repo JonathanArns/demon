@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use omnipaxos::storage::{Entry, NoSnapshot};
 
-use crate::{network::NodeId, weak_replication::{WeakLogEntry, WeakLogStorage}};
+use crate::{demon::TransactionId, network::NodeId, weak_replication::{WeakLogEntry, WeakLogStorage}};
 
 pub mod counters;
 
@@ -92,6 +92,7 @@ pub struct Response<O: Operation> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction<O> {
+    pub id: TransactionId,
     pub query: Query<O>,
     pub snapshot: Snapshot,
 }
