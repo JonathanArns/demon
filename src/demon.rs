@@ -1,20 +1,9 @@
-use crate::{network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Storage, TaggedOperation}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Storage, TaggedOperation, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
-use futures::Future;
 use serde::{Serialize, Deserialize};
 use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, OnceCell, RwLock}};
-use std::{sync::Arc, pin::Pin};
-use omnipaxos::storage::{Entry, NoSnapshot};
+use std::sync::Arc;
 
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-
-}
-
-impl Entry for Transaction {
-    type Snapshot = NoSnapshot;
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Component {
@@ -28,9 +17,6 @@ pub struct Message {
     pub component: Component,
 }
 
-/// A helper trait that we need to make rustc happy
-trait AsyncMsgHandler: Clone + FnOnce(NodeId, Message) -> Pin<Box<dyn Send + Future<Output = ()>>> {}
-
 /// The DeMon mixed consistency protocol.
 /// 
 /// DeMon is not `Clone` on purpose, so that not all of its components need to be as well.
@@ -38,7 +24,7 @@ trait AsyncMsgHandler: Clone + FnOnce(NodeId, Message) -> Pin<Box<dyn Send + Fut
 pub struct DeMon {
     network: Network<Message, Self>,
     storage: Arc<RwLock<Storage<CounterOp>>>,
-    sequencer: Sequencer<Transaction>,
+    sequencer: Sequencer<Transaction<CounterOp>>,
     weak_replication: WeakReplication<TaggedOperation<CounterOp>, Storage<CounterOp>>,
 }
 
@@ -61,7 +47,7 @@ impl MsgHandler<Message> for DeMon {
 
 impl DeMon {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<CounterOp>>) -> Arc<Self> {
         let demon_cell = Arc::new(OnceCell::const_new());
         let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
         let storage = Arc::new(RwLock::new(Storage::new(network.nodes().await)));
@@ -78,6 +64,7 @@ impl DeMon {
         tokio::task::spawn(demon.clone().event_loop(
             sequencer_events,
             weak_replication_events,
+            api,
         ));
         demon
     }
@@ -87,9 +74,17 @@ impl DeMon {
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent>,
         mut weak_replication_events: Receiver<WeakEvent<TaggedOperation<CounterOp>>>,
+        api: Box<dyn API<CounterOp>>,
     ) {
+        let (mut weak_api_events, mut strong_api_events) = api.start().await;
         loop {
             select! {
+                Some((query, result_sender)) = weak_api_events.recv() => {
+                    todo!("")
+                },
+                Some((query, result_sender)) = strong_api_events.recv() => {
+                    todo!("")
+                },
                 Some(e) = sequencer_events.recv() => {
                     todo!("execute decided transactions")
                 },

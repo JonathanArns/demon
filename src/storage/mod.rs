@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use omnipaxos::storage::{Entry, NoSnapshot};
 
 use crate::{network::NodeId, weak_replication::{WeakLogEntry, WeakLogStorage}};
 
@@ -52,9 +53,9 @@ impl Snapshot {
     }
 }
 
-pub trait Operation: Clone + Sync + Send + Serialize + DeserializeOwned + 'static {
+pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
     type State: Default + Clone + Sync + Send;
-    type ReadVal;
+    type ReadVal: Clone + Serialize;
 
     fn is_weak(&self) -> bool;
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal>;
@@ -78,10 +79,27 @@ impl<O: Operation> WeakLogEntry for TaggedOperation<O> {
     }
 }
 
-pub struct Transaction<O: Operation> {
-    ops: Vec<O>,
-    snapshot: Snapshot,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Query<O> {
+    pub ops: Vec<O>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Response<O: Operation> {
+    pub values: Vec<O::ReadVal>,
+}
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Transaction<O> {
+    pub query: Query<O>,
+    pub snapshot: Snapshot,
+}
+
+impl<O: Operation> Entry for Transaction<O> {
+    type Snapshot = NoSnapshot;
+}
+
 
 /// A deterministic in-memory storage layer, that combines weak and strong operations.
 ///
@@ -121,13 +139,13 @@ impl<O: Operation> Storage<O> {
     }
 
     /// Stores and executes a weak operation, returning a possible result.
-    pub fn exec_weak(&mut self, op: TaggedOperation<O>) -> Option<O::ReadVal> {
+    pub fn exec_weak(&mut self, op: TaggedOperation<O>) -> Response<O> {
         self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
         todo!()
     }
 
     /// Stores and executes a transaction, returning possible read values.
-    pub fn exec_transaction(&mut self, t: Transaction<O>) -> Vec<O::ReadVal> {
+    pub fn exec_transaction(&mut self, t: Transaction<O>) -> Response<O> {
         self.latest_transaction_snapshot.merge_inplace(&t.snapshot);
         todo!()
     }

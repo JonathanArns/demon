@@ -13,6 +13,7 @@ mod demon;
 
 use std::{env, time::Duration};
 use demon::DeMon;
+use api::http::HttpApi;
 
 use lazy_static::lazy_static;
 
@@ -23,7 +24,7 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    let demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE).await;
+    let demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
     println!("instantiated demon");
     tokio::time::sleep(Duration::from_secs(5)).await;
 }
