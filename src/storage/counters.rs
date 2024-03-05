@@ -34,6 +34,15 @@ impl Operation for CounterOp {
         }
     }
 
+    fn is_writing(&self) -> bool {
+        match *self {
+            Self::Read{..} => false,
+            Self::Add{..} => true,
+            Self::Subtract{..} => true,
+            Self::Set{..} => true,
+        }
+    }
+
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
         match *self {
             Self::Read { key } => {

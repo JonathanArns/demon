@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use omnipaxos::storage::{Entry, NoSnapshot};
 
-use crate::{demon::TransactionId, network::NodeId, weak_replication::{WeakLogEntry, WeakLogStorage}};
+use crate::{demon::TransactionId, network::NodeId};
 
 pub mod counters;
 
@@ -29,6 +29,10 @@ impl Snapshot {
         for i in 0..self.vec.len() {
             self.vec[i] = self.vec[i].max(other.vec[i]);
         }
+    }
+
+    pub fn increment(&mut self, node: NodeId, amount: u64) {
+        self.vec[node.0 as usize] += amount;
     }
 
     /// Returns None if they are concurrent.
@@ -58,25 +62,8 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     type ReadVal: Clone + Serialize;
 
     fn is_weak(&self) -> bool;
+    fn is_writing(&self) -> bool;
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal>;
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaggedOperation<O> {
-    pub node: NodeId,
-    pub idx: u64,
-    pub op: O,
-}
-
-impl<O: Operation> WeakLogEntry for TaggedOperation<O> {
-    fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
-        if self.idx >= snapshot.vec[self.node.0 as usize] {
-            snapshot.vec[self.node.0 as usize] = self.idx;
-            true
-        } else {
-            false
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -130,30 +117,35 @@ impl<O: Operation> Storage<O> {
         }
     }
 
-    pub fn current_snapshot(&self) -> Snapshot {
-        todo!()
-    }
-
     /// Stores a weak operation, without computing a possible result.
-    pub fn store_weak(&mut self, op: TaggedOperation<O>) {
-        self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
+    pub fn store_weak(&mut self, op: O) {
+        // self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
+        todo!()
     }
 
-    /// Stores and executes a weak operation, returning a possible result.
-    pub fn exec_weak(&mut self, op: TaggedOperation<O>) -> Response<O> {
-        self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
-        todo!()
+    /// Executes a weak query from the client.
+    /// 
+    /// Returns possible read values and a vector of operations to replicate asyncronously.
+    pub fn exec_weak(&mut self, query: Query<O>, from: NodeId) -> (Response<O>, Vec<O>) {
+        let mut output = vec![];
+        let mut entries_to_replicate = vec![];
+        let mut state = O::State::default(); // TODO: execute on the correct state
+        let (_offset, log) = self.weak_logs.get_mut(&from).unwrap();
+        for op in query.ops {
+            if let Some(result) = op.apply(&mut state) {
+                output.push(result);
+            }
+            if op.is_writing() {
+                log.push(op.clone());
+                entries_to_replicate.push(op);
+            }
+        }
+        (Response{ values: output }, entries_to_replicate)
     }
 
     /// Stores and executes a transaction, returning possible read values.
     pub fn exec_transaction(&mut self, t: Transaction<O>) -> Response<O> {
         self.latest_transaction_snapshot.merge_inplace(&t.snapshot);
-        todo!()
-    }
-}
-
-impl<O: Operation> WeakLogStorage<TaggedOperation<O>> for Storage<O> {
-    fn read(&self, log: NodeId, from: u64) -> Vec<TaggedOperation<O>> {
         todo!()
     }
 }

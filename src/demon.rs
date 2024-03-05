@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Snapshot, Storage, TaggedOperation, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Snapshot, Storage, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
 use tokio::{net::ToSocketAddrs, select, sync::{Mutex, mpsc::Receiver, OnceCell, RwLock}};
@@ -28,7 +28,7 @@ pub struct DeMon {
     network: Network<Message, Self>,
     storage: Arc<RwLock<Storage<CounterOp>>>,
     sequencer: Sequencer<Transaction<CounterOp>>,
-    weak_replication: WeakReplication<TaggedOperation<CounterOp>, Storage<CounterOp>>,
+    weak_replication: WeakReplication<CounterOp>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
 }
@@ -57,7 +57,7 @@ impl DeMon {
         let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
         let storage = Arc::new(RwLock::new(Storage::new(network.nodes().await)));
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone(), storage.clone()).await;
+        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let nodes = network.nodes().await;
         let demon = demon_cell.get_or_init(|| async move {
@@ -95,15 +95,19 @@ impl DeMon {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent>,
-        mut weak_replication_events: Receiver<WeakEvent<TaggedOperation<CounterOp>>>,
+        mut weak_replication_events: Receiver<WeakEvent<CounterOp>>,
         api: Box<dyn API<CounterOp>>,
     ) {
+        let my_id = self.network.my_id().await;
         let (mut weak_api_events, mut strong_api_events) = api.start().await;
         loop {
             select! {
                 Some((query, result_sender)) = weak_api_events.recv() => {
-                    // execute, send result, then replicate
-                    todo!("")
+                    let (result, entries_to_replicate) = self.storage.write().await.exec_weak(query, my_id);
+                    result_sender.send(result).unwrap();
+                    for entry in entries_to_replicate {
+                        self.weak_replication.replicate(entry).await;
+                    }
                 },
                 Some((query, result_sender)) = strong_api_events.recv() => {
                     // generate transaction ID, start task waiting for result, replicate, then execute
