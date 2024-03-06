@@ -1,6 +1,6 @@
 use std::{ops::RangeBounds, sync::Arc, time::Duration};
 
-use omnipaxos::{messages::Message as PaxosMessage, storage::{Entry, NoSnapshot}, util::LogEntry, ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
+use omnipaxos::{messages::Message as PaxosMessage, storage::Entry, util::LogEntry, ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
 use omnipaxos_storage::memory_storage::MemoryStorage;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
@@ -16,7 +16,8 @@ enum SequencerMsg<T: Entry> {
 #[derive(Debug, Clone)]
 pub enum SequencerEvent {
     /// Is triggered whenever the decided index increases.
-    Decided(u64),
+    /// Contains the index range of newly decided entries.
+    Decided(u64, u64),
 }
 
 /// A transaction sequencer that creates a replicated log of transactions.
@@ -89,8 +90,10 @@ where
                 let decided_idx = latch.get_decided_idx();
                 let mut my_decided_idx = self.decided_idx.lock().await;
                 if decided_idx > *my_decided_idx {
+                    let old_decided_idx = *my_decided_idx;
                     *my_decided_idx = decided_idx;
-                    self.event_sender.send(SequencerEvent::Decided(decided_idx)).await.unwrap();
+                    self.event_sender.send(SequencerEvent::Decided(old_decided_idx, decided_idx)).await.unwrap();
+                    // TODO: make sure we don't have off-by-one errors with these decided index ranges
                     // TODO: handle backpressure? or at least measure it
                 }
             }

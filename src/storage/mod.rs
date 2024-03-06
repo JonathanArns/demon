@@ -117,16 +117,18 @@ impl<O: Operation> Storage<O> {
         }
     }
 
-    /// Stores a weak operation, without computing a possible result.
-    pub fn store_weak(&mut self, op: O) {
+    /// Executes a weak query.
+    ///
+    /// To be called for all weak queries that are delivered by weak replication.
+    pub fn exec_remote_weak_query(&mut self, op: O) {
         // self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
-        todo!()
+        todo!("deal with remote weak operations in storage")
     }
 
     /// Executes a weak query from the client.
     /// 
     /// Returns possible read values and a vector of operations to replicate asyncronously.
-    pub fn exec_weak(&mut self, query: Query<O>, from: NodeId) -> (Response<O>, Vec<O>) {
+    pub fn exec_weak_query(&mut self, query: Query<O>, from: NodeId) -> (Response<O>, Vec<O>) {
         let mut output = vec![];
         let mut entries_to_replicate = vec![];
         let mut state = O::State::default(); // TODO: execute on the correct state

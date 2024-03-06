@@ -1,11 +1,11 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Snapshot, Storage, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Response, Snapshot, Storage, Transaction}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use tokio::{net::ToSocketAddrs, select, sync::{Mutex, mpsc::Receiver, OnceCell, RwLock}};
-use std::sync::Arc;
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell, RwLock}};
+use std::{collections::HashMap, sync::Arc};
 
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TransactionId(NodeId, u64);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,6 +31,8 @@ pub struct DeMon {
     weak_replication: WeakReplication<CounterOp>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
+    /// Strong client requests wait here for transaction completion.
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<CounterOp>>>>>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -68,6 +70,7 @@ impl DeMon {
                 weak_replication,
                 next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
                 next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
+                waiting_transactions: Default::default(),
             })
         }).await.clone();
         tokio::task::spawn(demon.clone().event_loop(
@@ -103,7 +106,7 @@ impl DeMon {
         loop {
             select! {
                 Some((query, result_sender)) = weak_api_events.recv() => {
-                    let (result, entries_to_replicate) = self.storage.write().await.exec_weak(query, my_id);
+                    let (result, entries_to_replicate) = self.storage.write().await.exec_weak_query(query, my_id);
                     result_sender.send(result).unwrap();
                     for entry in entries_to_replicate {
                         self.weak_replication.replicate(entry).await;
@@ -114,13 +117,32 @@ impl DeMon {
                     let id = self.generate_transaction_id().await;
                     let snapshot = self.choose_transaction_snapshot().await;
                     let transaction = Transaction { id, snapshot, query };
-                    todo!("")
+                    self.sequencer.append(transaction).await;
+                    self.waiting_transactions.lock().await.insert(id, result_sender);
                 },
                 Some(e) = sequencer_events.recv() => {
-                    todo!("execute decided transactions")
+                    match e {
+                        SequencerEvent::Decided(from, to) => {
+                            for transaction in self.sequencer.read(from..to).await {
+                                let result_sender = self.waiting_transactions.lock().await.remove(&transaction.id);
+                                let response = self.storage.write().await.exec_transaction(transaction);
+                                if let Some(sender) = result_sender {
+                                    // this node has a client waiting for this response
+                                    sender.send(response).unwrap();
+                                }
+                            }
+                        },
+                    }
                 },
                 Some(e) = weak_replication_events.recv() => {
-                    todo!("execute decided transactions")
+                    match e {
+                        WeakEvent::Deliver(op) => {
+                            self.storage.write().await.exec_remote_weak_query(op.value);
+                        },
+                        WeakEvent::QuorumReplicated(snapshot) => {
+                            self.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
+                        },
+                    }
                 },
             }
         }

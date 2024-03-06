@@ -11,12 +11,12 @@ mod weak_replication;
 /// The DeMon protocol
 mod demon;
 
-use std::{env, time::Duration};
+use std::env;
 use demon::DeMon;
 use api::http::HttpApi;
 
 use lazy_static::lazy_static;
-use tokio::{select, signal::unix::{signal, SignalKind}, sync::{oneshot, watch}};
+use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
 lazy_static! {
     static ref CLUSTER_SIZE: u32 = env::args().skip(1).next().map(|s| s.parse::<u32>().unwrap()).unwrap();
@@ -25,8 +25,8 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    let demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
-    println!("instantiated demon");
+    let _demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
+    println!("Started DeMon.");
 
 
     // listen for termination signals
