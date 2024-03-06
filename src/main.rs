@@ -16,6 +16,7 @@ use demon::DeMon;
 use api::http::HttpApi;
 
 use lazy_static::lazy_static;
+use tokio::{select, signal::unix::{signal, SignalKind}, sync::{oneshot, watch}};
 
 lazy_static! {
     static ref CLUSTER_SIZE: u32 = env::args().skip(1).next().map(|s| s.parse::<u32>().unwrap()).unwrap();
@@ -26,5 +27,22 @@ lazy_static! {
 async fn main() {
     let demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
     println!("instantiated demon");
-    tokio::time::sleep(Duration::from_secs(5)).await;
+
+
+    // listen for termination signals
+    let (terminate_tx, mut terminate_rx) = watch::channel(());
+    tokio::spawn(async move {
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        loop {
+            select! {
+                _ = sigterm.recv() => (),
+                _ = sigint.recv() => (),
+            };
+            terminate_tx.send(()).expect("Failed to send internal termination signal.");
+        }
+    });
+
+    terminate_rx.changed().await.expect("Failed to listen for internal termination signal.");
+    println!("Shutting down. Goodbye.");
 }
