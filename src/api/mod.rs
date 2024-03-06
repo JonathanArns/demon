@@ -4,6 +4,7 @@ use tokio::sync::{mpsc::Receiver, oneshot::Sender};
 use crate::storage::{Operation, Query, Response};
 
 pub mod http;
+pub mod query_parser;
 
 #[async_trait]
 pub trait API<O: Operation>: Send {
