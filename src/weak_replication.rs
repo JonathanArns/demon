@@ -183,7 +183,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     async fn run_gossip(self) {
         loop {
             tokio::time::sleep(Duration::from_micros(100_000)).await;
-            let payload = bincode::serialize(&*self.current_snapshot.lock().await).unwrap();
+            let payload = bincode::serialize(&WeakMsg::<T>::Snapshot(self.current_snapshot.lock().await.clone())).unwrap();
             let msg = Message{component: Component::WeakReplication, payload};
             self.network.broadcast(msg).await;
         }
