@@ -1,4 +1,4 @@
-use axum::{async_trait, extract::State, routing::get, Router};
+use axum::{async_trait, extract::State, routing::post, Router};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::storage::{counters::CounterOp, Query, Response};
@@ -17,8 +17,8 @@ impl API<CounterOp> for HttpApi {
         let (strong_sender, strong_receiver) = mpsc::channel(1000);
         tokio::task::spawn(async move {
             let app = Router::new()
-                .route("/strong", get(strong_endpoint))
-                .route("/weak", get(weak_endpoint))
+                .route("/strong", post(strong_endpoint))
+                .route("/weak", post(weak_endpoint))
                 .with_state((weak_sender, strong_sender));
             let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
             axum::serve(listener, app).await.unwrap()

@@ -14,9 +14,12 @@ pub struct TaggedEntry<T> {
 }
 
 impl<T> TaggedEntry<T> {
+    /// Checks if this entry is contained in the snapshot or not.
+    /// If not, it updates the snapshot to include the entry.
     fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
-        if self.idx >= snapshot.vec[self.node.0 as usize] {
-            snapshot.vec[self.node.0 as usize] = self.idx;
+        if self.idx >= snapshot.get(self.node) {
+            // idx + 1, because snapshots represent length, not the max index
+            *snapshot.get_mut(self.node) = self.idx + 1;
             true
         } else {
             false
@@ -80,8 +83,8 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             logs.insert(*id, (0, vec![]));
         }
         // TODO: correctly initialize snapshots
-        let current_snapshot = Arc::new(Mutex::new(Snapshot{vec: vec![]}));
-        let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot{vec: vec![]}));
+        let current_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
+        let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let peer_snapshots = Arc::new(Mutex::new(HashMap::new()));
         let quorum_size = (nodes.len() as u64) / 2 + 1;
         let weak_replication = Self {
@@ -106,18 +109,21 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                 let mut entries = vec![];
                 {
                     let logs_latch = self.logs.read().await;
-                    for node_id in 0..s.vec.len() {
+                    for id in 1..=s.vec.len() {
+                        let node_id = NodeId(id as u32);
                         // we only respond with entries, if we also replicate this log
-                        if let Some((offset, log)) = logs_latch.get(&NodeId(node_id as u32)) {
-                            let range_start = s.vec[node_id] as usize - *offset;
-                            let tagged_entries = log[range_start..].iter().enumerate().map(|(i, entry)| {
-                                TaggedEntry {
-                                    value: entry.clone(),
-                                    node: NodeId(node_id as u32),
-                                    idx: s.vec[node_id] + i as u64,
-                                }
-                            });
-                            entries.extend(tagged_entries);
+                        if let Some((offset, log)) = logs_latch.get(&node_id) {
+                            let range_start = s.get(node_id) as usize - *offset;
+                            if log.len() > range_start {
+                                let tagged_entries = log[range_start..].iter().enumerate().map(|(i, entry)| {
+                                    TaggedEntry {
+                                        value: entry.clone(),
+                                        node: node_id,
+                                        idx: s.get(node_id) + i as u64,
+                                    }
+                                });
+                                entries.extend(tagged_entries);
+                            }
                         }
                     }
                 }
@@ -133,9 +139,12 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             },
             WeakMsg::Entries(e) => {
                 let mut latch = self.current_snapshot.lock().await;
+                let mut logs = self.logs.write().await;
                 for entry in e {
                     let new_entry = entry.update_snapshot(&mut latch);
                     if new_entry {
+                        let (_offset, log) = logs.get_mut(&entry.node).unwrap();
+                        log.push(entry.value.clone());
                         self.event_sender.send(WeakEvent::Deliver(entry)).await.unwrap();
                     }
                 }

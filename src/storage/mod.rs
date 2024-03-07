@@ -6,56 +6,8 @@ use omnipaxos::storage::{Entry, NoSnapshot};
 use crate::{demon::TransactionId, network::NodeId};
 
 pub mod counters;
-
-/// A snapshot identifier that enables processes to construct the snapshot
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Snapshot {
-    // /// (term, idx) per weak log
-    // pub vec: Vec<(u32, u64)>,
-    /// idx per weak log
-    pub vec: Vec<u64>,
-}
-
-impl Snapshot {
-    pub fn merge(&self, other: &Self) -> Self {
-        let mut vector = vec![];
-        for i in 0..self.vec.len() {
-            vector.push(self.vec[i].max(other.vec[i]));
-        }
-        Self { vec: vector }
-    }
-
-    pub fn merge_inplace(&mut self, other: &Self) {
-        for i in 0..self.vec.len() {
-            self.vec[i] = self.vec[i].max(other.vec[i]);
-        }
-    }
-
-    pub fn increment(&mut self, node: NodeId, amount: u64) {
-        self.vec[node.0 as usize] += amount;
-    }
-
-    /// Returns None if they are concurrent.
-    /// Returns Some(true) if self fully includes other.
-    pub fn greater(&self, other: &Self) -> Option<bool> {
-        let mut result = None;
-        for i in 0..self.vec.len() {
-            if self.vec[i] > other.vec[i] {
-                if result == Some(false) {
-                    return None
-                }
-                result = Some(true);
-            }
-            if self.vec[i] < other.vec[i] {
-                if result == Some(true) {
-                    return None
-                }
-                result = Some(false)
-            }
-        }
-        result
-    }
-}
+pub mod snapshot;
+pub use snapshot::Snapshot;
 
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
     type State: Default + Clone + Sync + Send;
@@ -122,7 +74,7 @@ impl<O: Operation> Storage<O> {
     /// To be called for all weak queries that are delivered by weak replication.
     pub fn exec_remote_weak_query(&mut self, op: O) {
         // self.weak_logs.get_mut(&op.node).unwrap().1.push(op.op);
-        todo!("deal with remote weak operations in storage")
+        println!("TODO: execute weak remote op");
     }
 
     /// Executes a weak query from the client.
@@ -148,6 +100,7 @@ impl<O: Operation> Storage<O> {
     /// Stores and executes a transaction, returning possible read values.
     pub fn exec_transaction(&mut self, t: Transaction<O>) -> Response<O> {
         self.latest_transaction_snapshot.merge_inplace(&t.snapshot);
-        todo!()
+        println!("TODO: execute transaction");
+        Response{ values: vec![] }
     }
 }

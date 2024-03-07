@@ -5,12 +5,16 @@ services:
     hostname: bob
     build: .
     command: demon 3
+    ports:
+      - 8080:80
 
   alice:
     container_name: alice
     hostname: alice
     build: .
     command: demon 3 bob:1234
+    ports:
+      - 8081:80
     environment:
       RUST_BACKTRACE: 1
     depends_on:
@@ -21,5 +25,7 @@ services:
     hostname: fabi
     build: .
     command: demon 3 bob:1234
+    ports:
+      - 8082:80
     depends_on:
       - bob
