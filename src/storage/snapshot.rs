@@ -29,6 +29,12 @@ impl Snapshot {
         &mut self.vec[node.0 as usize - 1]
     }
 
+    pub fn entries(&self) -> Vec<(NodeId, u64)> {
+        self.vec.clone().into_iter().enumerate().map(|(i, value)| {
+            (NodeId(i as u32 + 1), value)
+        }).collect()
+    }
+
     pub fn merge(&self, other: &Self) -> Self {
         let mut vector = vec![];
         for i in 0..self.vec.len() {
@@ -43,25 +49,14 @@ impl Snapshot {
         }
     }
 
-    /// Returns None if they are concurrent.
-    /// Returns Some(true) if self fully includes other.
-    pub fn greater(&self, other: &Self) -> Option<bool> {
-        let mut result = None;
+    /// Returns true if self includes any operations that are not in other.
+    pub fn greater(&self, other: &Self) -> bool {
         for i in 0..self.vec.len() {
             if self.vec[i] > other.vec[i] {
-                if result == Some(false) {
-                    return None
-                }
-                result = Some(true);
-            }
-            if self.vec[i] < other.vec[i] {
-                if result == Some(true) {
-                    return None
-                }
-                result = Some(false)
+                return true
             }
         }
-        result
+        false
     }
 }
 

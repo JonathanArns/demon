@@ -26,7 +26,7 @@ pub struct Message {
 /// DeMon is `Sync` however, and never requires mutable access, so an `Arc<DeMon>` will do the trick.
 pub struct DeMon {
     network: Network<Message, Self>,
-    storage: Arc<RwLock<Storage<CounterOp>>>,
+    storage: Storage<CounterOp>,
     sequencer: Sequencer<Transaction<CounterOp>>,
     weak_replication: WeakReplication<CounterOp>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
@@ -57,7 +57,7 @@ impl DeMon {
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<CounterOp>>) -> Arc<Self> {
         let demon_cell = Arc::new(OnceCell::const_new());
         let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
-        let storage = Arc::new(RwLock::new(Storage::new(network.nodes().await)));
+        let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
@@ -106,7 +106,7 @@ impl DeMon {
         loop {
             select! {
                 Some((query, result_sender)) = weak_api_events.recv() => {
-                    let (result, entries_to_replicate) = self.storage.write().await.exec_weak_query(query, my_id);
+                    let (result, entries_to_replicate) = self.storage.exec_weak_query(query, my_id).await;
                     result_sender.send(result).unwrap();
                     for entry in entries_to_replicate {
                         self.weak_replication.replicate(entry).await;
@@ -125,7 +125,7 @@ impl DeMon {
                         SequencerEvent::Decided(from, to) => {
                             for transaction in self.sequencer.read(from..to).await {
                                 let result_sender = self.waiting_transactions.lock().await.remove(&transaction.id);
-                                let response = self.storage.write().await.exec_transaction(transaction);
+                                let response = self.storage.exec_transaction(transaction).await;
                                 if let Some(sender) = result_sender {
                                     // this node has a client waiting for this response
                                     sender.send(response).unwrap();
@@ -137,9 +137,10 @@ impl DeMon {
                 Some(e) = weak_replication_events.recv() => {
                     match e {
                         WeakEvent::Deliver(op) => {
-                            self.storage.write().await.exec_remote_weak_query(op.value);
+                            self.storage.exec_remote_weak_query(op).await;
                         },
                         WeakEvent::QuorumReplicated(snapshot) => {
+                            println!("{:?}", snapshot);
                             self.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
                         },
                     }

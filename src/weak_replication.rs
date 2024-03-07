@@ -16,7 +16,7 @@ pub struct TaggedEntry<T> {
 impl<T> TaggedEntry<T> {
     /// Checks if this entry is contained in the snapshot or not.
     /// If not, it updates the snapshot to include the entry.
-    fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
+    pub fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
         if self.idx >= snapshot.get(self.node) {
             // idx + 1, because snapshots represent length, not the max index
             *snapshot.get_mut(self.node) = self.idx + 1;
@@ -24,6 +24,11 @@ impl<T> TaggedEntry<T> {
         } else {
             false
         }
+    }
+
+    /// Returns true, if this entry is contained in the snapshot.
+    pub fn is_in_snapshot(&self, snapshot: &Snapshot) -> bool {
+        self.idx < snapshot.get(self.node)
     }
 }
 
@@ -178,7 +183,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             snapshot.push(values[(self.quorum_size - 1) as usize]);
         }
         let snapshot = Snapshot{vec: snapshot};
-        if let Some(true) = snapshot.greater(&*qs_latch) {
+        if snapshot.greater(&*qs_latch) {
             *qs_latch = snapshot.clone();
             Some(snapshot)
         } else {
