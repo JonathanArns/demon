@@ -3,7 +3,10 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex, RwLock};
 
-use crate::{demon::{Component, DeMon, Message}, network::{Network, NodeId}, storage::Snapshot};
+use crate::{demon::{Component, DeMon, Message}, network::{Network, NodeId}};
+
+mod snapshot;
+pub use snapshot::Snapshot;
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

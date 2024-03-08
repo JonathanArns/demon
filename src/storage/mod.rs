@@ -4,11 +4,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use omnipaxos::storage::{Entry, NoSnapshot};
 use tokio::sync::RwLock;
 
-use crate::{demon::TransactionId, network::NodeId, weak_replication::TaggedEntry};
+use crate::{demon::TransactionId, network::NodeId, weak_replication::{TaggedEntry, Snapshot}};
 
 pub mod counters;
-pub mod snapshot;
-pub use snapshot::Snapshot;
 
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
     type State: Default + Clone + Sync + Send;

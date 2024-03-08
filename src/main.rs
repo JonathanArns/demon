@@ -1,13 +1,13 @@
 /// client API, calls sequencer or executor
 mod api;
-/// The transaction sequencing layer (replicated Log)
-mod sequencer;
-/// The storage layer (versioned CRDTs)
-mod storage;
 /// networking with basic cluster membership
 mod network;
+/// The transaction sequencing layer (replicated Log)
+mod sequencer;
 /// The replication layer used for weak operations
 mod weak_replication;
+/// The storage and query execution layer.
+mod storage;
 /// The DeMon protocol
 mod demon;
 
