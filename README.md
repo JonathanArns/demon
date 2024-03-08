@@ -1,12 +1,16 @@
 # Demon
-Deterministic transactions over Monotonic state
+Deterministic transactions over Monotonic state.
 
-Start a small cluster with
+A prototype implementation of a mixed-consistency transaction processing protocol.
+
+### How to run
+
+Start a small cluster with:
 ```bash
 docker compose up --build
 ```
 
-Interactively query from the terminal with
+Interactively query from the terminal with:
 ```bash
 ./repl.py
 ```
