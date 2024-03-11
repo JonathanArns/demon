@@ -248,6 +248,7 @@ where
     /// Creates and registers a new socket connection to `addr`.
     async fn connect(self: Arc<Self>, addr: IpAddr) -> anyhow::Result<()> {
         let stream = TcpStream::connect(SocketAddr::new(addr, PORT)).await?;
+        stream.set_nodelay(true)?;
         self.clone().handle_new_stream(stream, addr).await?;
         Ok(())
     }
