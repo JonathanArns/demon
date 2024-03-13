@@ -95,6 +95,7 @@ impl DeMon {
     }
 
     /// Process events from the components.
+    /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent>,
@@ -103,49 +104,61 @@ impl DeMon {
     ) {
         let my_id = self.network.my_id().await;
         let (mut weak_api_events, mut strong_api_events) = api.start().await;
-        loop {
-            select! {
-                Some((query, result_sender)) = weak_api_events.recv() => {
-                    let (result, entries_to_replicate) = self.storage.exec_weak_query(query, my_id).await;
-                    result_sender.send(result).unwrap();
-                    for entry in entries_to_replicate {
-                        self.weak_replication.replicate(entry).await;
-                    }
-                },
-                Some((query, result_sender)) = strong_api_events.recv() => {
-                    // generate transaction ID, start task waiting for result, replicate, then execute
-                    let id = self.generate_transaction_id().await;
-                    let snapshot = self.choose_transaction_snapshot().await;
-                    let transaction = Transaction { id, snapshot, query };
-                    self.sequencer.append(transaction).await;
-                    self.waiting_transactions.lock().await.insert(id, result_sender);
-                },
-                Some(e) = sequencer_events.recv() => {
-                    match e {
-                        SequencerEvent::Decided(from, to) => {
-                            for transaction in self.sequencer.read(from..to).await {
-                                let result_sender = self.waiting_transactions.lock().await.remove(&transaction.id);
-                                let response = self.storage.exec_transaction(transaction).await;
-                                if let Some(sender) = result_sender {
-                                    // this node has a client waiting for this response
-                                    sender.send(response).unwrap();
-                                }
-                            }
-                        },
-                    }
-                },
-                Some(e) = weak_replication_events.recv() => {
-                    match e {
-                        WeakEvent::Deliver(op) => {
-                            self.storage.exec_remote_weak_query(op).await;
-                        },
-                        WeakEvent::QuorumReplicated(snapshot) => {
-                            println!("{:?}", snapshot);
-                            self.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
-                        },
-                    }
-                },
+        let demon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let (query, result_sender) = weak_api_events.recv().await.unwrap();
+                let (result, entries_to_replicate) = demon.storage.exec_weak_query(query, my_id).await;
+                result_sender.send(result).unwrap();
+                for entry in entries_to_replicate {
+                    demon.weak_replication.replicate(entry).await;
+                }
             }
-        }
+        });
+        let demon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let (query, result_sender) = strong_api_events.recv().await.unwrap();
+                // generate transaction ID, start task waiting for result, replicate, then execute
+                let id = demon.generate_transaction_id().await;
+                let snapshot = demon.choose_transaction_snapshot().await;
+                let transaction = Transaction { id, snapshot, query };
+                demon.sequencer.append(transaction).await;
+                demon.waiting_transactions.lock().await.insert(id, result_sender);
+            }
+        });
+        let demon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let e = sequencer_events.recv().await.unwrap();
+                match e {
+                    SequencerEvent::Decided(from, to) => {
+                        for transaction in demon.sequencer.read(from..to).await {
+                            let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
+                            let response = demon.storage.exec_transaction(transaction).await;
+                            if let Some(sender) = result_sender {
+                                // this node has a client waiting for this response
+                                sender.send(response).unwrap();
+                            }
+                        }
+                    },
+                }
+            }
+        });
+        let demon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let e = weak_replication_events.recv().await.unwrap();
+                match e {
+                    WeakEvent::Deliver(op) => {
+                        demon.storage.exec_remote_weak_query(op).await;
+                    },
+                    WeakEvent::QuorumReplicated(snapshot) => {
+                        println!("{:?}", snapshot);
+                        demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
+                    },
+                }
+            }
+        });
     }
 }

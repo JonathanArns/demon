@@ -120,19 +120,21 @@ impl<O: Operation> Storage<O> {
 
         // wait until all required weak ops are here
         loop {
-            let mut has_all_entries = true;
-            let weak_latch = self.uncommitted_weak_ops.read().await;
-            for (node, len) in t.snapshot.entries() {
-                if snapshot_latch.get(node) >= len {
-                    continue
+            {
+                let mut has_all_entries = true;
+                let weak_latch = self.uncommitted_weak_ops.read().await;
+                for (node, len) in t.snapshot.entries() {
+                    if snapshot_latch.get(node) >= len {
+                        continue
+                    }
+                    if let None = weak_latch.iter().find(|e| e.node == node && e.idx == len-1) {
+                        has_all_entries = false;
+                        break
+                    }
                 }
-                if let None = weak_latch.iter().find(|e| e.node == node && e.idx == len-1) {
-                    has_all_entries = false;
+                if has_all_entries {
                     break
                 }
-            }
-            if has_all_entries {
-                break
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
