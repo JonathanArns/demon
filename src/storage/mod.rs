@@ -76,13 +76,15 @@ impl<O: Operation> Storage<O> {
     /// Returns possible read values and a vector of operations to replicate asyncronously.
     pub async fn exec_weak_query(&self, query: Query<O>, from: NodeId) -> (Response<O>, Vec<O>) {
         let mut latch = self.uncommitted_weak_ops.write().await;
-        // the weak log idx that the first write operation in this query will get
+
+        // compute the weak log idx that the first write operation in this query will get
+        let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
         let mut next_op_idx = latch.iter()
             .filter(|o| o.node == from)
             .map(|o| o.idx)
             .max()
             .map(|idx| idx + 1)
-            .unwrap_or(0);
+            .unwrap_or(snapshot_val);
 
         let mut output = vec![];
         let mut entries_to_replicate = vec![];
