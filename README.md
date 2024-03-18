@@ -14,12 +14,3 @@ Interactively query from the terminal with:
 ```bash
 ./repl.py
 ```
-
-### Things to work on
-#### Missing functionality
-- partitioning (local and cross-regional)
-- a useful data and query model
-- failure recovery (optional for this prototype)
-
-#### Optimization
-- more efficient (parallel) execution
