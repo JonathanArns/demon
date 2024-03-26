@@ -75,10 +75,9 @@ impl<O: Operation> Storage<O> {
     /// 
     /// Returns possible read values and a vector of operations to replicate asyncronously.
     pub async fn exec_weak_query(&self, query: Query<O>, from: NodeId) -> (Response<O>, Vec<O>) {
-        let mut latch = self.uncommitted_weak_ops.write().await;
-
         // compute the weak log idx that the first write operation in this query will get
         let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
+        let mut latch = self.uncommitted_weak_ops.write().await;
         let mut next_op_idx = latch.iter()
             .filter(|o| o.node == from)
             .map(|o| o.idx)
@@ -116,13 +115,12 @@ impl<O: Operation> Storage<O> {
 
     /// Stores and executes a transaction, returning possible read values.
     pub async fn exec_transaction(&self, t: Transaction<O>) -> Response<O> {
-        let mut snapshot_latch = self.latest_transaction_snapshot.write().await;
-
         // wait until all required weak ops are here
         loop {
             {
                 let mut has_all_entries = true;
                 let weak_latch = self.uncommitted_weak_ops.read().await;
+                let snapshot_latch = self.latest_transaction_snapshot.read().await;
                 for (node, len) in t.snapshot.entries() {
                     if snapshot_latch.get(node) >= len {
                         continue
@@ -138,11 +136,12 @@ impl<O: Operation> Storage<O> {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        let mut snapshot_latch = self.latest_transaction_snapshot.write().await;
         snapshot_latch.merge_inplace(&t.snapshot);
 
         // update local snapshot state and filter weak ops
-        let mut state_latch = self.latest_transaction_snapshot_state.write().await;
         let mut weak_latch = self.uncommitted_weak_ops.write().await;
+        let mut state_latch = self.latest_transaction_snapshot_state.write().await;
         let mut i = 0;
         while i < weak_latch.len() {
             let op = &weak_latch[i];

@@ -5,12 +5,12 @@ ENV my_appname=$my_appname
 WORKDIR /workspace/
 
 COPY ./ ./
-RUN touch ./src/main.rs
+RUN touch ./demon/src/main.rs
 
 # build, with dependency cache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id="reg-${TARGETPLATFORM}" \
     --mount=type=cache,target=target,id="target-demon-${TARGETPLATFORM}" \
-    cargo build --release && \
+    cargo build --release --bin demon && \
     mkdir bin && \
     mv target/release/demon bin/demon
 

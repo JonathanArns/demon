@@ -1,7 +1,7 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Response, Storage, Transaction}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Serialize, Deserialize};
-use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell, RwLock}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell, RwLock}};
 use std::{collections::HashMap, sync::Arc};
 
 
@@ -134,6 +134,7 @@ impl DeMon {
                 match e {
                     SequencerEvent::Decided(from, to) => {
                         for transaction in demon.sequencer.read(from..to).await {
+                            let id = transaction.id;
                             let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
                             let response = demon.storage.exec_transaction(transaction).await;
                             if let Some(sender) = result_sender {
@@ -154,7 +155,6 @@ impl DeMon {
                         demon.storage.exec_remote_weak_query(op).await;
                     },
                     WeakEvent::QuorumReplicated(snapshot) => {
-                        println!("{:?}", snapshot);
                         demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
                     },
                 }
