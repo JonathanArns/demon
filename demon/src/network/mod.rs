@@ -89,6 +89,7 @@ where
         tokio::task::spawn(network.inner.clone().send_loop());
 
         if let Some(addrs) = addrs {
+            let mut connected = false;
             for addr in lookup_host(addrs).await? {
                 let r = network.inner.clone().connect(addr.ip()).await;
                 if r.is_err() {
@@ -105,9 +106,12 @@ where
                         network.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(join_msg.clone()).await?;
                     }
                 }
-                return Ok(network)
+                connected = true;
+                break;
             }
-            bail!("could not connect to cluster");
+            if !connected {
+                bail!("could not connect to cluster");
+            }
         } else {
             *network.inner.id.write().await = NodeId(1);
             tokio::task::spawn(network.inner.clone().root_only_loop());
