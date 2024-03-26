@@ -8,6 +8,7 @@ use rand::{Rng, thread_rng};
 // benchmark settings
 const STRONG_RATIO: f64 = 0.1;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+const NUM_CLIENTS: usize = 10;
 
 lazy_static!{
     static ref TARGET_DOMAIN: String = env::args().skip(1).next().expect("missing target domain as first argument");
@@ -21,7 +22,7 @@ struct Measurement {
 #[tokio::main]
 async fn main() {
     let mut futures = vec![];
-    for _ in 0..10 {
+    for _ in 0..NUM_CLIENTS {
         futures.push(tokio::spawn(run_client()));
     }
     for f in futures {

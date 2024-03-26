@@ -57,6 +57,9 @@ where
         let my_id = network.my_id().await;
         let server_config = ServerConfig {
             pid: my_id.0.into(),
+            election_tick_timeout: 100,
+            resend_message_tick_timeout: 100,
+            leader_priority: if my_id.0 == 1 { 1 } else { 0 },
             ..Default::default()
         };
         let cluster_config = ClusterConfig {
@@ -93,7 +96,6 @@ where
                     let old_decided_idx = *my_decided_idx;
                     *my_decided_idx = decided_idx;
                     self.event_sender.send(SequencerEvent::Decided(old_decided_idx, decided_idx)).await.unwrap();
-                    // TODO: make sure we don't have off-by-one errors with these decided index ranges
                     // TODO: handle backpressure? or at least measure it
                 }
             }
@@ -102,7 +104,8 @@ where
 
     /// Schedules a new transaction for sequencing, so that it will eventually be decided.
     pub async fn append(&self, transaction: T) {
-        self.omnipaxos.lock().await.append(transaction).unwrap();
+        let mut latch = self.omnipaxos.lock().await;
+        latch.append(transaction).unwrap();
     }
 
     /// Read decided transactions in a range from the log.
