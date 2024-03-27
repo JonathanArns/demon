@@ -232,9 +232,11 @@ where
     /// Send buffered outgoing messages.
     /// TODO: this locks and unlocks `self.streams` for each msg... seems not great maybe
     async fn flush(self: Arc<Self>) -> anyhow::Result<()> {
+        let mut to_flush = vec![];
         let buf = std::mem::take(&mut *self.outgoing_buffer.lock().await);
         for (to, msg) in buf {
             let addr = self.lookup_peer(to).await?;
+            to_flush.push(addr);
             if let Some(sender) = self.streams.lock().await.get_mut(&addr) {
                 sender.feed(bincode::serialize(&msg).unwrap().into()).await.unwrap(); // TOOD: handle send error
                 continue
@@ -243,8 +245,9 @@ where
             self.clone().connect(addr).await?;
             self.streams.lock().await.get_mut(&addr).unwrap().feed(bincode::serialize(&msg).unwrap().into()).await.unwrap(); // TOOD: handle send error
         }
-        for sender in self.streams.lock().await.values_mut() {
-            sender.flush().await.unwrap(); // TODO: handle send error
+        let mut latch = self.streams.lock().await;
+        for addr in to_flush {
+            latch.get_mut(&addr).unwrap().flush().await.unwrap(); // TODO: handle send error
         }
         Ok(())
     }
@@ -271,7 +274,7 @@ where
 
     async fn send_loop(self: Arc<Self>) -> anyhow::Result<()> {
         loop {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_micros(100)).await;
             self.clone().flush().await?;
         }
     }
