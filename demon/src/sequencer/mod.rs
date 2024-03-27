@@ -14,10 +14,10 @@ enum SequencerMsg<T: Entry> {
 }
 
 #[derive(Debug, Clone)]
-pub enum SequencerEvent {
+pub enum SequencerEvent<T> {
     /// Is triggered whenever the decided index increases.
     /// Contains the index range of newly decided entries.
-    Decided(u64, u64),
+    Decided(Vec<T>),
 }
 
 /// A transaction sequencer that creates a replicated log of transactions.
@@ -28,7 +28,7 @@ where
 {
     omnipaxos: Arc<Mutex<OmniPaxos<T, MemoryStorage<T>>>>,
     network: Network<Message, DeMon>,
-    event_sender: Sender<SequencerEvent>,
+    event_sender: Sender<SequencerEvent<T>>,
     decided_idx: Arc<Mutex<u64>>,
 }
 
@@ -52,7 +52,7 @@ where
     T: Entry + Serialize + DeserializeOwned + Send + 'static,
     T::Snapshot: Send,
 {
-    pub async fn new(network: Network<Message, DeMon>) -> (Self, Receiver<SequencerEvent>) {
+    pub async fn new(network: Network<Message, DeMon>) -> (Self, Receiver<SequencerEvent<T>>) {
         let configuration_id = 1;
         let my_id = network.my_id().await;
         let server_config = ServerConfig {
@@ -95,8 +95,22 @@ where
                 if decided_idx > *my_decided_idx {
                     let old_decided_idx = *my_decided_idx;
                     *my_decided_idx = decided_idx;
-                    self.event_sender.send(SequencerEvent::Decided(old_decided_idx, decided_idx)).await.unwrap();
-                    // TODO: handle backpressure? or at least measure it
+                    let decided_entries = if let Some(entries) = latch.read_entries(old_decided_idx..decided_idx) {
+                        entries.into_iter().filter(|e| {
+                            match e {
+                                LogEntry::Decided(_) => true,
+                                _ => false,
+                            }
+                        }).map(|e| {
+                            match e {
+                                LogEntry::Decided(t) => t,
+                                _ => unreachable!("should have been filtered out"),
+                            }
+                        }).collect()
+                    } else {
+                        vec![]
+                    };
+                    self.event_sender.send(SequencerEvent::Decided(decided_entries)).await.unwrap();
                 }
             }
         }

@@ -1,6 +1,6 @@
 FROM rust:bookworm as build
-ARG my_appname
-ENV my_appname=$my_appname
+
+RUN apt-get update && apt-get install -y clang
 
 WORKDIR /workspace/
 

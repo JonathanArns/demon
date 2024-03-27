@@ -232,7 +232,7 @@ where
     /// Send buffered outgoing messages.
     /// TODO: this locks and unlocks `self.streams` for each msg... seems not great maybe
     async fn flush(self: Arc<Self>) -> anyhow::Result<()> {
-        let buf: Vec<(NodeId, NetworkMsg<T>)> = self.outgoing_buffer.lock().await.drain(0..).collect();
+        let buf = std::mem::take(&mut *self.outgoing_buffer.lock().await);
         for (to, msg) in buf {
             let addr = self.lookup_peer(to).await?;
             if let Some(sender) = self.streams.lock().await.get_mut(&addr) {
@@ -325,7 +325,10 @@ where
                 Message::Payload(msg) => {
                     if let Some(handler) = handler.get() {
                         let msg_handler = handler.clone();
-                        tokio::task::spawn(async move { msg_handler.handle_msg(from, msg).await });
+                        // TODO: don't block the loop on every msg, but still deliver in order to
+                        // each component...
+                        // tokio::task::spawn(async move { msg_handler.handle_msg(from, msg).await });
+                        msg_handler.handle_msg(from, msg).await;
                     }
                 },
                 Message::Join => {

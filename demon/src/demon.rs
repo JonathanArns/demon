@@ -98,7 +98,7 @@ impl DeMon {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut sequencer_events: Receiver<SequencerEvent>,
+        mut sequencer_events: Receiver<SequencerEvent<Transaction<CounterOp>>>,
         mut weak_replication_events: Receiver<WeakEvent<CounterOp>>,
         api: Box<dyn API<CounterOp>>,
     ) {
@@ -132,8 +132,8 @@ impl DeMon {
             loop {
                 let e = sequencer_events.recv().await.unwrap();
                 match e {
-                    SequencerEvent::Decided(from, to) => {
-                        for transaction in demon.sequencer.read(from..to).await {
+                    SequencerEvent::Decided(decided_entries) => {
+                        for transaction in decided_entries {
                             let id = transaction.id;
                             let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
                             let response = demon.storage.exec_transaction(transaction).await;
