@@ -325,9 +325,6 @@ where
                 Message::Payload(msg) => {
                     if let Some(handler) = handler.get() {
                         let msg_handler = handler.clone();
-                        // TODO: don't block the loop on every msg, but still deliver in order to
-                        // each component...
-                        // tokio::task::spawn(async move { msg_handler.handle_msg(from, msg).await });
                         msg_handler.handle_msg(from, msg).await;
                     }
                 },

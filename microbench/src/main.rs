@@ -11,7 +11,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const NUM_CLIENTS: usize = 10;
 
 lazy_static!{
-    static ref TARGET_DOMAIN: String = env::args().skip(1).next().expect("missing target domain as first argument");
+    static ref TARGET_DOMAINS: Vec<String> = env::args().skip(1).collect();
 }
 
 struct Measurement {
@@ -21,23 +21,26 @@ struct Measurement {
 
 #[tokio::main]
 async fn main() {
+    if TARGET_DOMAINS.len() < 1 {
+        panic!("missing arguments: target domain(s)");
+    }
     let mut futures = vec![];
-    for _ in 0..NUM_CLIENTS {
-        futures.push(tokio::spawn(run_client()));
+    for i in 0..NUM_CLIENTS {
+        futures.push(tokio::spawn(run_client(&TARGET_DOMAINS[i % TARGET_DOMAINS.len()])));
     }
     for f in futures {
         f.await.unwrap();
     }
 }
 
-async fn run_client() {
+async fn run_client(domain: &str) {
     let client = reqwest::Client::new();
     let mut measurements = vec![];
     for _ in 0..1000 {
         let (query, strong) = generate_query();
         let path = if strong { "strong" } else { "weak" };
         let start_time = Instant::now();
-        let response = client.post(format!("{}/{}", &*TARGET_DOMAIN, path))
+        let response = client.post(format!("{}/{}", domain, path))
             .body(query)
             .timeout(REQUEST_TIMEOUT)
             .send()
