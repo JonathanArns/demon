@@ -112,6 +112,13 @@ where
                     };
                     self.event_sender.send(SequencerEvent::Decided(decided_entries)).await.unwrap();
                 }
+                // flush OmniPaxos messages
+                let messages = latch.outgoing_messages().into_iter().map(|m| {
+                    (NodeId(m.get_receiver() as u32), Message{payload: bincode::serialize(&SequencerMsg::<T>::Omnipaxos(m)).unwrap(), component: Component::Sequencer})
+                }).collect::<Vec<_>>();
+                if messages.len() > 0 {
+                    self.network.send_batch(messages).await;
+                }
             }
         }
     }
@@ -120,6 +127,13 @@ where
     pub async fn append(&self, transaction: T) {
         let mut latch = self.omnipaxos.lock().await;
         latch.append(transaction).unwrap();
+        // flush OmniPaxos messages
+        let messages = latch.outgoing_messages().into_iter().map(|m| {
+            (NodeId(m.get_receiver() as u32), Message{payload: bincode::serialize(&SequencerMsg::<T>::Omnipaxos(m)).unwrap(), component: Component::Sequencer})
+        }).collect::<Vec<_>>();
+        if messages.len() > 0 {
+            self.network.send_batch(messages).await;
+        }
     }
 
     /// Read decided transactions in a range from the log.
@@ -151,10 +165,13 @@ where
             tokio::time::sleep(Duration::from_micros(1000)).await;
             let mut latch = self.omnipaxos.lock().await;
             latch.tick();
+            // flush OmniPaxos messages
             let messages = latch.outgoing_messages().into_iter().map(|m| {
                 (NodeId(m.get_receiver() as u32), Message{payload: bincode::serialize(&SequencerMsg::<T>::Omnipaxos(m)).unwrap(), component: Component::Sequencer})
             }).collect::<Vec<_>>();
-            self.network.send_batch(messages).await;
+            if messages.len() > 0 {
+                self.network.send_batch(messages).await;
+            }
         }
     }
 }
