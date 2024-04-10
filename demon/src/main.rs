@@ -8,11 +8,10 @@ mod sequencer;
 mod weak_replication;
 /// The storage and query execution layer.
 mod storage;
-/// The DeMon protocol
-mod demon;
+/// The different protocols
+mod protocols;
 
 use std::env;
-use demon::DeMon;
 use api::http::HttpApi;
 
 use lazy_static::lazy_static;
@@ -25,7 +24,7 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    let _demon = DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
+    let _demon = protocols::demon::DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
     println!("Started DeMon.");
 
 

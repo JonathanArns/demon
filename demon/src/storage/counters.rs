@@ -25,12 +25,21 @@ impl Operation for CounterOp {
     type State = HashMap<Key, Value>;
     type ReadVal = Option<Value>;
 
-    fn is_weak(&self) -> bool {
+    fn is_red(&self) -> bool {
         match *self {
-            Self::Read{..} => true,
+            Self::Read{..} => false,
             Self::Add{..} => true,
             Self::Subtract{..} => true,
-            Self::Set{..} => false,
+            Self::Set{..} => true,
+        }
+    }
+
+    fn is_semiserializable_strong(&self) -> bool {
+        match *self {
+            Self::Read{..} => false,
+            Self::Add{..} => false,
+            Self::Subtract{..} => false,
+            Self::Set{..} => true,
         }
     }
 
@@ -41,6 +50,10 @@ impl Operation for CounterOp {
             Self::Subtract{..} => true,
             Self::Set{..} => true,
         }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        todo!()
     }
 
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {

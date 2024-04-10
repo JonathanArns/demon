@@ -5,7 +5,7 @@ use omnipaxos_storage::memory_storage::MemoryStorage;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex};
 
-use crate::{demon::{Component, DeMon, Message}, network::{Network, NodeId}};
+use crate::{protocols::{Component, Protocol, Message}, network::{Network, NodeId}};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ where
     T::Snapshot: Send,
 {
     omnipaxos: Arc<Mutex<OmniPaxos<T, MemoryStorage<T>>>>,
-    network: Network<Message, DeMon>,
+    network: Network<Message, Protocol>,
     event_sender: Sender<SequencerEvent<T>>,
     decided_idx: Arc<Mutex<u64>>,
 }
@@ -52,7 +52,7 @@ where
     T: Entry + Serialize + DeserializeOwned + Send + 'static,
     T::Snapshot: Send,
 {
-    pub async fn new(network: Network<Message, DeMon>) -> (Self, Receiver<SequencerEvent<T>>) {
+    pub async fn new(network: Network<Message, Protocol>) -> (Self, Receiver<SequencerEvent<T>>) {
         let configuration_id = 1;
         let my_id = network.my_id().await;
         let server_config = ServerConfig {

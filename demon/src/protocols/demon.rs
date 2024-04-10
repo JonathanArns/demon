@@ -1,24 +1,9 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{counters::CounterOp, Response, Storage, Transaction}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{Operation, Response, Transaction, demon::Storage}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell, RwLock}};
 use std::{collections::HashMap, sync::Arc};
 
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct TransactionId(NodeId, u64);
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Component {
-    Sequencer,
-    WeakReplication,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Message {
-    pub payload: Vec<u8>,
-    pub component: Component,
-}
+use super::{Op, TransactionId, Component, Message};
 
 /// The DeMon mixed consistency protocol.
 /// 
@@ -26,13 +11,13 @@ pub struct Message {
 /// DeMon is `Sync` however, and never requires mutable access, so an `Arc<DeMon>` will do the trick.
 pub struct DeMon {
     network: Network<Message, Self>,
-    storage: Storage<CounterOp>,
-    sequencer: Sequencer<Transaction<CounterOp>>,
-    weak_replication: WeakReplication<CounterOp>,
+    storage: Storage<Op>,
+    sequencer: Sequencer<Transaction<Op>>,
+    weak_replication: WeakReplication<Op>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
     /// Strong client requests wait here for transaction completion.
-    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<CounterOp>>>>>,
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<Op>>>>>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -54,7 +39,7 @@ impl MsgHandler<Message> for DeMon {
 
 impl DeMon {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<CounterOp>>) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
         let demon_cell = Arc::new(OnceCell::const_new());
         let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
         let storage = Storage::new(network.nodes().await);
@@ -98,33 +83,31 @@ impl DeMon {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut sequencer_events: Receiver<SequencerEvent<Transaction<CounterOp>>>,
-        mut weak_replication_events: Receiver<WeakEvent<CounterOp>>,
-        api: Box<dyn API<CounterOp>>,
+        mut sequencer_events: Receiver<SequencerEvent<Transaction<Op>>>,
+        mut weak_replication_events: Receiver<WeakEvent<Op>>,
+        api: Box<dyn API<Op>>,
     ) {
         let my_id = self.network.my_id().await;
-        let (mut weak_api_events, mut strong_api_events) = api.start().await;
+        let mut api_events = api.start().await;
         let demon = self.clone();
         tokio::spawn(async move {
             loop {
-                let (query, result_sender) = weak_api_events.recv().await.unwrap();
-                let (result, entries_to_replicate) = demon.storage.exec_weak_query(query, my_id).await;
-                result_sender.send(result).unwrap();
-                for entry in entries_to_replicate {
-                    demon.weak_replication.replicate(entry).await;
+                let (query, result_sender) = api_events.recv().await.unwrap();
+                if query.is_semiserializable_strong() {
+                    // strong operation
+                    let id = demon.generate_transaction_id().await;
+                    let snapshot = demon.choose_transaction_snapshot().await;
+                    let transaction = Transaction { id, snapshot, op: query };
+                    demon.sequencer.append(transaction).await;
+                    demon.waiting_transactions.lock().await.insert(id, result_sender);
+                } else {
+                    // weak operation
+                    let result = demon.storage.exec_weak_query(query.clone(), my_id).await;
+                    result_sender.send(result).unwrap();
+                    if query.is_writing() {
+                        demon.weak_replication.replicate(query).await;
+                    }
                 }
-            }
-        });
-        let demon = self.clone();
-        tokio::spawn(async move {
-            loop {
-                let (query, result_sender) = strong_api_events.recv().await.unwrap();
-                // generate transaction ID, start task waiting for result, replicate, then execute
-                let id = demon.generate_transaction_id().await;
-                let snapshot = demon.choose_transaction_snapshot().await;
-                let transaction = Transaction { id, snapshot, query };
-                demon.sequencer.append(transaction).await;
-                demon.waiting_transactions.lock().await.insert(id, result_sender);
             }
         });
         let demon = self.clone();
@@ -134,7 +117,6 @@ impl DeMon {
                 match e {
                     SequencerEvent::Decided(decided_entries) => {
                         for transaction in decided_entries {
-                            let id = transaction.id;
                             let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
                             let response = demon.storage.exec_transaction(transaction).await;
                             if let Some(sender) = result_sender {
