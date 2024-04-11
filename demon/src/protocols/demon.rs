@@ -1,6 +1,6 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{Operation, Response, Transaction, demon::Storage}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell, RwLock}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc};
 
 use super::{Op, TransactionId, Component, Message};
@@ -10,10 +10,11 @@ use super::{Op, TransactionId, Component, Message};
 /// DeMon is not `Clone` on purpose, so that not all of its components need to be as well.
 /// DeMon is `Sync` however, and never requires mutable access, so an `Arc<DeMon>` will do the trick.
 pub struct DeMon {
-    network: Network<Message, Self>,
+    network: Network<Message>,
     storage: Storage<Op>,
     sequencer: Sequencer<Transaction<Op>>,
     weak_replication: WeakReplication<Op>,
+    /// TODO: I think the fields don't need to be arcs themselves, demon is always in an arc itself
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
     /// Strong client requests wait here for transaction completion.
@@ -40,24 +41,22 @@ impl MsgHandler<Message> for DeMon {
 impl DeMon {
     /// Creates and starts a new DeMon node.
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
-        let demon_cell = Arc::new(OnceCell::const_new());
-        let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
+        let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let nodes = network.nodes().await;
-        let demon = demon_cell.get_or_init(|| async move {
-            Arc::new(Self {
-                network,
-                storage,
-                sequencer,
-                weak_replication,
-                next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
-                next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
-                waiting_transactions: Default::default(),
-            })
-        }).await.clone();
+        let demon = Arc::new(Self {
+            network: network.clone(),
+            storage,
+            sequencer,
+            weak_replication,
+            next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
+            next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
+            waiting_transactions: Default::default(),
+        });
+        network.set_msg_handler(demon.clone()).await;
         tokio::task::spawn(demon.clone().event_loop(
             sequencer_events,
             weak_replication_events,

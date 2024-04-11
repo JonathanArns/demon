@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
 use super::Operation;
@@ -52,8 +53,29 @@ impl Operation for CounterOp {
         }
     }
 
-    fn parse(text: &str) -> Option<Self> {
-        todo!()
+    fn parse(text: &str) -> anyhow::Result<Self> {
+        if let Some((key, val)) = text.split_once("+") {
+            let key = key.parse::<Key>()?;
+            let val = val.parse::<Value>()?;
+            Ok(CounterOp::Add{key, val})
+        } else if let Some((key, val)) = text.split_once("-") {
+            let key = key.parse::<Key>()?;
+            let val = val.parse::<Value>()?;
+            Ok(CounterOp::Subtract{key, val})
+        } else if let Some((key, val)) = text.split_once("=") {
+            let key = key.parse::<Key>()?;
+            let val = val.parse::<Value>()?;
+            Ok(CounterOp::Set{key, val})
+        } else {
+            let (op, operands) = text.split_at(1);
+            match op {
+                "r" => {
+                    let key = operands.parse::<Key>()?;
+                    Ok(CounterOp::Read{key})
+                },
+                _ => Err(anyhow!("bad query"))
+            }
+        }
     }
 
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {

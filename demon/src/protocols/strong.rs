@@ -1,13 +1,13 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, Response, Transaction}, weak_replication::Snapshot};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex}};
 use std::{collections::HashMap, sync::Arc};
 
 use super::{Op, TransactionId, Component, Message};
 
 /// A basic deterministic implementation of strictly serializable replication
 pub struct Strong {
-    network: Network<Message, Self>,
+    network: Network<Message>,
     storage: Storage<Op>,
     sequencer: Sequencer<Transaction<Op>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
@@ -35,21 +35,18 @@ impl MsgHandler<Message> for Strong {
 impl Strong {
     /// Creates and starts a new DeMon node.
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
-        let strong_cell = Arc::new(OnceCell::const_new());
-        let network = Network::connect(addrs, cluster_size, strong_cell.clone()).await.unwrap();
+        let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new();
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let my_id = network.my_id().await;
-        let nodes = network.nodes().await;
-        let proto = strong_cell.get_or_init(|| async move {
-            Arc::new(Self {
-                network,
-                storage,
-                sequencer,
-                next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
-                waiting_transactions: Default::default(),
-            })
-        }).await.clone();
+        let proto = Arc::new(Self {
+            network: network.clone(),
+            storage,
+            sequencer,
+            next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
+            waiting_transactions: Default::default(),
+        });
+        network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
             sequencer_events,
             api,

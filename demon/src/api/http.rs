@@ -1,47 +1,31 @@
 use axum::{async_trait, extract::State, routing::{post, get}, Router};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::storage::{counters::CounterOp, Query, Response};
+use crate::storage::{Operation, Response};
 
-use super::{API, query_parser::parse_counter_query};
-
-type Senders = (mpsc::Sender<(Query<CounterOp>, oneshot::Sender<Response<CounterOp>>)>, mpsc::Sender<(Query<CounterOp>, oneshot::Sender<Response<CounterOp>>)>);
-type Receivers = (mpsc::Receiver<(Query<CounterOp>, oneshot::Sender<Response<CounterOp>>)>, mpsc::Receiver<(Query<CounterOp>, oneshot::Sender<Response<CounterOp>>)>);
+use super::API;
 
 pub struct HttpApi {}
 
 #[async_trait]
-impl API<CounterOp> for HttpApi {
-    async fn start(self: Box<Self>) -> Receivers {
-        let (weak_sender, weak_receiver) = mpsc::channel(1000);
-        let (strong_sender, strong_receiver) = mpsc::channel(1000);
+impl<O: Operation> API<O> for HttpApi {
+    async fn start(self: Box<Self>) -> mpsc::Receiver<(O, oneshot::Sender<Response<O>>)> {
+        let (query_sender, query_receiver) = mpsc::channel(1000);
         tokio::task::spawn(async move {
             let app = Router::new()
                 .route("/", get(|| async { "Hello world!" }))
-                .route("/strong", post(strong_endpoint))
-                .route("/weak", post(weak_endpoint))
-                .with_state((weak_sender, strong_sender));
+                .route("/query", post(query_endpoint))
+                .with_state(query_sender);
             let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
             axum::serve(listener, app).await.unwrap()
         });
-        (weak_receiver, strong_receiver)
+        query_receiver
     }
 }
 
-async fn strong_endpoint(State(senders): State<Senders>, body: String) -> String {
-    let (_, query_sender) = senders;
+async fn query_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<Response<O>>)>>, body: String) -> String {
     let (result_sender, result_receiver) = oneshot::channel();
-    let query = parse_counter_query(&body).unwrap();
-    query_sender.send((query, result_sender)).await.unwrap();
-    let result = result_receiver.await.unwrap();
-    format!("{:?}", result)
-}
-
-// TODO: make sure we only accept weak operations
-async fn weak_endpoint(State(senders): State<Senders>, body: String) -> String {
-    let (query_sender, _) = senders;
-    let (result_sender, result_receiver) = oneshot::channel();
-    let query = parse_counter_query(&body).unwrap();
+    let query = O::parse(&body).unwrap();
     query_sender.send((query, result_sender)).await.unwrap();
     let result = result_receiver.await.unwrap();
     format!("{:?}", result)

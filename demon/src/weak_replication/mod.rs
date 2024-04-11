@@ -3,7 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex, RwLock};
 
-use crate::{demon::{Component, Protocol, Message}, network::{Network, NodeId}};
+use crate::{protocols::{Component, Message}, network::{Network, NodeId}};
 
 mod snapshot;
 pub use snapshot::Snapshot;
@@ -54,7 +54,7 @@ pub enum WeakEvent<T> {
 ///
 /// TODO: garbage collection / log compaction (should be possible for fully replicated entries)
 pub struct WeakReplication<T> {
-    network: Network<Message, Protocol>,
+    network: Network<Message>,
     event_sender: Sender<WeakEvent<T>>,
     /// The replicated logs, with an offset
     logs: Arc<RwLock<HashMap<NodeId, (usize, Vec<T>)>>>,
@@ -82,7 +82,7 @@ impl<T> Clone for WeakReplication<T> {
 
 impl<T> WeakReplication<T>
 where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
-    pub async fn new(network: Network<Message, Protocol>) -> (Self, Receiver<WeakEvent<T>>) {
+    pub async fn new(network: Network<Message>) -> (Self, Receiver<WeakEvent<T>>) {
         let (sender, receiver) = channel(1000);
 
         let nodes = network.nodes().await;

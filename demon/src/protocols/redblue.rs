@@ -1,13 +1,13 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{Operation, Response, Transaction, redblue::Storage}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, OnceCell, RwLock}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc};
 
 use super::{Op, TransactionId, Component, Message};
 
 /// TODO: A RedBlue implementeation
 pub struct RedBlue {
-    network: Network<Message, Self>,
+    network: Network<Message>,
     storage: Storage<Op>,
     sequencer: Sequencer<Transaction<Op>>,
     weak_replication: WeakReplication<Op>,
@@ -37,30 +37,28 @@ impl MsgHandler<Message> for RedBlue {
 impl RedBlue {
     /// Creates and starts a new DeMon node.
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
-        let demon_cell = Arc::new(OnceCell::const_new());
-        let network = Network::connect(addrs, cluster_size, demon_cell.clone()).await.unwrap();
+        let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let nodes = network.nodes().await;
-        let demon = demon_cell.get_or_init(|| async move {
-            Arc::new(Self {
-                network,
-                storage,
-                sequencer,
-                weak_replication,
-                next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
-                next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
-                waiting_transactions: Default::default(),
-            })
-        }).await.clone();
-        tokio::task::spawn(demon.clone().event_loop(
+        let proto = Arc::new(Self {
+            network: network.clone(),
+            storage,
+            sequencer,
+            weak_replication,
+            next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
+            next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
+            waiting_transactions: Default::default(),
+        });
+        network.set_msg_handler(proto.clone()).await;
+        tokio::task::spawn(proto.clone().event_loop(
             sequencer_events,
             weak_replication_events,
             api,
         ));
-        demon
+        proto
     }
 
     /// Generates a new globally unique transaction Id.
@@ -99,7 +97,7 @@ impl RedBlue {
                     demon.waiting_transactions.lock().await.insert(id, result_sender);
                 } else {
                     // weak operation
-                    let result = demon.storage.exec_weak_query(query.clone(), my_id).await;
+                    let result = demon.storage.exec_blue(query.clone(), my_id).await;
                     result_sender.send(result).unwrap();
                     if query.is_writing() {
                         demon.weak_replication.replicate(query).await;
@@ -115,7 +113,7 @@ impl RedBlue {
                     SequencerEvent::Decided(decided_entries) => {
                         for transaction in decided_entries {
                             let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
-                            let response = demon.storage.exec_transaction(transaction).await;
+                            let response = demon.storage.exec_red(transaction).await;
                             if let Some(sender) = result_sender {
                                 // this node has a client waiting for this response
                                 sender.send(response).unwrap();
@@ -131,7 +129,7 @@ impl RedBlue {
                 let e = weak_replication_events.recv().await.unwrap();
                 match e {
                     WeakEvent::Deliver(op) => {
-                        demon.storage.exec_remote_weak_query(op).await;
+                        demon.storage.exec_blue(op.value, op.node).await;
                     },
                     WeakEvent::QuorumReplicated(snapshot) => {
                         demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);

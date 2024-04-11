@@ -1,13 +1,13 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, storage::{Operation, basic::Storage}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, OnceCell}};
+use tokio::{net::ToSocketAddrs, sync::mpsc::Receiver};
 use std::sync::Arc;
 
 use super::{Op, Component, Message};
 
 /// A basic implementation of causal order RDTs
-pub struct DeMon {
-    network: Network<Message, Self>,
+pub struct Causal {
+    network: Network<Message>,
     storage: Storage<Op>,
     weak_replication: WeakReplication<Op>,
 }
@@ -16,35 +16,31 @@ pub struct DeMon {
 // maybe instead send the messages to the components via channels?
 // or just spawn a task for ones that block the loop...
 #[async_trait]
-impl MsgHandler<Message> for DeMon {
+impl MsgHandler<Message> for Causal {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
         match msg.component {
-            Component::Sequencer => {
-                self.sequencer.handle_msg(msg.payload).await;
-            },
             Component::WeakReplication => {
                 self.weak_replication.handle_msg(from, msg.payload).await;
-            }
+            },
+            Component::Sequencer => {
+                unreachable!()
+            },
         }
     }
 }
 
-impl DeMon {
+impl Causal {
     /// Creates and starts a new DeMon node.
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
-        let proto_cell = Arc::new(OnceCell::const_new());
-        let network = Network::connect(addrs, cluster_size, proto_cell.clone()).await.unwrap();
+        let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new();
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
-        let my_id = network.my_id().await;
-        let nodes = network.nodes().await;
-        let proto = proto_cell.get_or_init(|| async move {
-            Arc::new(Self {
-                network,
-                storage,
-                weak_replication,
-            })
-        }).await.clone();
+        let proto = Arc::new(Self {
+            network: network.clone(),
+            storage,
+            weak_replication,
+        });
+        network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
             weak_replication_events,
             api,
