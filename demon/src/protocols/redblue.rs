@@ -1,18 +1,28 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{Operation, Response, Transaction, redblue::Storage}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{redblue::Storage, Operation, Response, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc};
 
 use super::{TransactionId, Component, Message};
+
+/// Used to track causality between red and blue ops
+#[derive(Serialize, Deserialize, Clone)]
+struct TaggedBlueOp<O> {
+    op: O,
+    /// the amount of decided red transactions that we need to wait for before executing this blue op
+    transaction_count: usize,
+}
 
 /// TODO: A RedBlue implementeation
 pub struct RedBlue<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
-    weak_replication: WeakReplication<O>,
+    weak_replication: WeakReplication<TaggedBlueOp<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
+    decided_transaction_count: Arc<RwLock<usize>>,
     /// Strong client requests wait here for transaction completion.
     waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<O>>>>>,
 }
@@ -47,6 +57,7 @@ impl<O: Operation> RedBlue<O> {
             weak_replication,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
             next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
+            decided_transaction_count: Default::default(),
             waiting_transactions: Default::default(),
         });
         network.set_msg_handler(proto.clone()).await;
@@ -71,46 +82,57 @@ impl<O: Operation> RedBlue<O> {
         self.next_transaction_snapshot.read().await.clone()
     }
 
+    async fn inc_transaction_count(&self, amount: usize) {
+        *self.decided_transaction_count.write().await += amount;
+    }
+
     /// Process events from the components.
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
-        mut weak_replication_events: Receiver<WeakEvent<O>>,
+        mut weak_replication_events: Receiver<WeakEvent<TaggedBlueOp<O>>>,
         api: Box<dyn API<O>>,
     ) {
         let my_id = self.network.my_id().await;
         let mut api_events = api.start().await;
-        let demon = self.clone();
+        let proto = self.clone();
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_red() {
                     // strong operation
-                    let id = demon.generate_transaction_id().await;
-                    let snapshot = demon.choose_transaction_snapshot().await;
+                    let id = proto.generate_transaction_id().await;
+                    let snapshot = proto.choose_transaction_snapshot().await;
                     let transaction = Transaction { id, snapshot, op: query };
-                    demon.sequencer.append(transaction).await;
-                    demon.waiting_transactions.lock().await.insert(id, result_sender);
+                    proto.sequencer.append(transaction).await;
+                    proto.waiting_transactions.lock().await.insert(id, result_sender);
                 } else {
                     // weak operation
-                    let result = demon.storage.exec_blue(query.clone(), my_id).await;
+                    let result = proto.storage.exec_blue(query.clone(), my_id).await;
                     result_sender.send(result).unwrap();
                     if query.is_writing() {
-                        demon.weak_replication.replicate(query).await;
+                        let tagged_op = TaggedBlueOp {
+                            op: query,
+                            transaction_count: *proto.decided_transaction_count.read().await,
+                        };
+                        proto.weak_replication.replicate(tagged_op).await;
                     }
                 }
             }
         });
-        let demon = self.clone();
+        let proto = self.clone();
         tokio::spawn(async move {
             loop {
                 let e = sequencer_events.recv().await.unwrap();
                 match e {
                     SequencerEvent::Decided(decided_entries) => {
+                        // we might track causality from red to blue ops slightly over-conservatively, but
+                        // better this, than losing convergence
+                        proto.inc_transaction_count(decided_entries.len()).await;
                         for transaction in decided_entries {
-                            let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
-                            let response = demon.storage.exec_red(transaction).await;
+                            let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);
+                            let response = proto.storage.exec_red(transaction).await;
                             if let Some(sender) = result_sender {
                                 // this node has a client waiting for this response
                                 sender.send(response).unwrap();
@@ -120,16 +142,33 @@ impl<O: Operation> RedBlue<O> {
                 }
             }
         });
-        let demon = self.clone();
+        let proto = self.clone();
         tokio::spawn(async move {
+            let mut waiting_blue_ops: Vec<TaggedEntry<TaggedBlueOp<O>>> = vec![];
             loop {
                 let e = weak_replication_events.recv().await.unwrap();
                 match e {
-                    WeakEvent::Deliver(op) => {
-                        demon.storage.exec_blue(op.value, op.node).await;
+                    WeakEvent::Deliver(new_op) => {
+                        // first, execute waiting ops that this might depend on
+                        let transaction_count = *proto.decided_transaction_count.read().await;
+                        for i in 0..waiting_blue_ops.len() {
+                            let op = &waiting_blue_ops[i];
+                            if transaction_count >= op.value.transaction_count {
+                                let op = waiting_blue_ops.remove(i);
+                                proto.storage.exec_blue(op.value.op, op.node).await;
+                            } else {
+                                break
+                            }
+                        }
+                        // then execute or queue this op, depending on if it needs to wait for a red operation
+                        if new_op.value.transaction_count > transaction_count {
+                            waiting_blue_ops.push(new_op);
+                        } else {
+                            proto.storage.exec_blue(new_op.value.op, new_op.node).await;
+                        }
                     },
                     WeakEvent::QuorumReplicated(snapshot) => {
-                        demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
+                        proto.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
                     },
                 }
             }
