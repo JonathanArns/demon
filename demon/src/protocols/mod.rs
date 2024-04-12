@@ -1,13 +1,10 @@
-use crate::{network::NodeId, storage::counters::CounterOp};
+use crate::network::NodeId;
 use serde::{Serialize, Deserialize};
 
 pub mod demon;
 pub mod redblue;
-pub mod strong;
+pub mod strict;
 pub mod causal;
-
-/// The Operation type to be used by all protocols
-type Op = CounterOp;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TransactionId(NodeId, u64);

@@ -40,7 +40,7 @@ async fn main() {
             protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
         },
         "strict" => {
-            protocols::strong::Strong::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+            protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
         },
         "causal" => {
             protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;

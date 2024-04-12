@@ -7,7 +7,7 @@ use super::{Component, Message};
 
 /// A basic implementation of causal order RDTs
 pub struct Causal<O: Operation> {
-    network: Network<Message>,
+    _network: Network<Message>,
     storage: Storage<O>,
     weak_replication: WeakReplication<O>,
 }
@@ -36,7 +36,7 @@ impl<O: Operation> Causal<O> {
         let storage = Storage::new();
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let proto = Arc::new(Self {
-            network: network.clone(),
+            _network: network.clone(),
             storage,
             weak_replication,
         });

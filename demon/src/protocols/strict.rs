@@ -6,8 +6,8 @@ use std::{collections::HashMap, sync::Arc};
 use super::{TransactionId, Component, Message};
 
 /// A basic deterministic implementation of strictly serializable replication
-pub struct Strong<O: Operation> {
-    network: Network<Message>,
+pub struct Strict<O: Operation> {
+    _network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
@@ -19,8 +19,8 @@ pub struct Strong<O: Operation> {
 // maybe instead send the messages to the components via channels?
 // or just spawn a task for ones that block the loop...
 #[async_trait]
-impl<O: Operation> MsgHandler<Message> for Strong<O> {
-    async fn handle_msg(&self, from: NodeId, msg: Message) {
+impl<O: Operation> MsgHandler<Message> for Strict<O> {
+    async fn handle_msg(&self, _from: NodeId, msg: Message) {
         match msg.component {
             Component::Sequencer => {
                 self.sequencer.handle_msg(msg.payload).await;
@@ -32,7 +32,7 @@ impl<O: Operation> MsgHandler<Message> for Strong<O> {
     }
 }
 
-impl<O: Operation> Strong<O> {
+impl<O: Operation> Strict<O> {
     /// Creates and starts a new DeMon node.
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size).await.unwrap();
@@ -40,7 +40,7 @@ impl<O: Operation> Strong<O> {
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let my_id = network.my_id().await;
         let proto = Arc::new(Self {
-            network: network.clone(),
+            _network: network.clone(),
             storage,
             sequencer,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),

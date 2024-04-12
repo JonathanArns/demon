@@ -35,6 +35,8 @@ impl Snapshot {
         }).collect()
     }
 
+    /// Computes the least upper bound of the two snapshots
+    #[allow(unused)]
     pub fn merge(&self, other: &Self) -> Self {
         let mut vector = vec![];
         for i in 0..self.vec.len() {
@@ -43,6 +45,7 @@ impl Snapshot {
         Self { vec: vector }
     }
 
+    /// Computes the least upper bound of the two snapshots, updating this snapshot in place.
     pub fn merge_inplace(&mut self, other: &Self) {
         for i in 0..self.vec.len() {
             self.vec[i] = self.vec[i].max(other.vec[i]);
