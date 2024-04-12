@@ -49,6 +49,13 @@ pub enum WeakEvent<T> {
     QuorumReplicated(Snapshot),
 }
 
+struct LocallyOrderedEntry<T> {
+    value: T,
+    /// represents the order in which entries were locally received, to ensure causality within
+    /// replication messages
+    idx: usize,
+}
+
 /// An eventually consistent replication layer that replicates one totally ordered log per
 /// participant, and keeps track of which entries are quorum-replicated.
 ///
@@ -57,7 +64,9 @@ pub struct WeakReplication<T> {
     network: Network<Message>,
     event_sender: Sender<WeakEvent<T>>,
     /// The replicated logs, with an offset
-    logs: Arc<RwLock<HashMap<NodeId, (usize, Vec<T>)>>>,
+    logs: Arc<RwLock<HashMap<NodeId, (usize, Vec<LocallyOrderedEntry<T>>)>>>,
+    /// a counter that is incremented for each entry
+    local_log_len: Arc<Mutex<usize>>,
     quorum_replicated_snapshot: Arc<Mutex<Snapshot>>,
     current_snapshot: Arc<Mutex<Snapshot>>,
     peer_snapshots: Arc<Mutex<HashMap<NodeId, Snapshot>>>,
@@ -71,6 +80,7 @@ impl<T> Clone for WeakReplication<T> {
             network: self.network.clone(),
             event_sender: self.event_sender.clone(),
             logs: self.logs.clone(),
+            local_log_len: self.local_log_len.clone(),
             quorum_replicated_snapshot: self.quorum_replicated_snapshot.clone(),
             current_snapshot: self.current_snapshot.clone(),
             peer_snapshots: self.peer_snapshots.clone(),
@@ -90,7 +100,6 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         for id in &nodes {
             logs.insert(*id, (0, vec![]));
         }
-        // TODO: correctly initialize snapshots
         let current_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let peer_snapshots = Arc::new(Mutex::new(HashMap::new()));
@@ -99,6 +108,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             network,
             event_sender: sender,
             logs: Arc::new(RwLock::new(logs)),
+            local_log_len: Default::default(),
             quorum_replicated_snapshot,
             current_snapshot,
             peer_snapshots,
@@ -123,11 +133,15 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                         if let Some((offset, log)) = logs_latch.get(&node_id) {
                             let range_start = s.get(node_id) as usize - *offset;
                             if log.len() > range_start {
+                                let peer_offset = s.get(node_id);
                                 let tagged_entries = log[range_start..].iter().enumerate().map(|(i, entry)| {
-                                    TaggedEntry {
-                                        value: entry.clone(),
-                                        node: node_id,
-                                        idx: s.get(node_id) + i as u64,
+                                    LocallyOrderedEntry{
+                                        idx: entry.idx,
+                                        value: TaggedEntry {
+                                            value: entry.value.clone(),
+                                            node: node_id,
+                                            idx: peer_offset + i as u64,
+                                        }
                                     }
                                 });
                                 entries.extend(tagged_entries);
@@ -136,6 +150,8 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                     }
                 }
                 if entries.len() > 0 {
+                    entries.sort_unstable_by_key(|e| e.idx);
+                    let entries = entries.into_iter().map(|e| e.value).collect();
                     let payload = bincode::serialize(&WeakMsg::Entries(entries)).unwrap();
                     let msg = Message{component: Component::WeakReplication, payload};
                     self.network.send(from, msg).await;
@@ -148,11 +164,17 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             WeakMsg::Entries(e) => {
                 let mut latch = self.current_snapshot.lock().await;
                 let mut logs = self.logs.write().await;
+                let mut local_log_len = self.local_log_len.lock().await;
                 for entry in e {
-                    let new_entry = entry.update_snapshot(&mut latch);
-                    if new_entry {
+                    let is_new_entry = entry.update_snapshot(&mut latch);
+                    if is_new_entry {
                         let (_offset, log) = logs.get_mut(&entry.node).unwrap();
-                        log.push(entry.value.clone());
+                        let locally_ordered_entry = LocallyOrderedEntry {
+                            idx: *local_log_len,
+                            value: entry.value.clone(),
+                        };
+                        *local_log_len += 1;
+                        log.push(locally_ordered_entry);
                         self.event_sender.send(WeakEvent::Deliver(entry)).await.unwrap();
                     }
                 }
@@ -166,7 +188,13 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         self.current_snapshot.lock().await.increment(my_id, 1);
         let mut log_latch = self.logs.write().await;
         let (_offset, log) = log_latch.get_mut(&my_id).unwrap();
-        log.push(entry);
+        let mut local_log_len = self.local_log_len.lock().await;
+        let locally_ordered_entry = LocallyOrderedEntry {
+            idx: *local_log_len,
+            value: entry,
+        };
+        *local_log_len += 1;
+        log.push(locally_ordered_entry);
     }
 
     /// Re-computes the quorum_replicated_snapshot.
