@@ -3,20 +3,20 @@ use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::mpsc::Receiver};
 use std::sync::Arc;
 
-use super::{Op, Component, Message};
+use super::{Component, Message};
 
 /// A basic implementation of causal order RDTs
-pub struct Causal {
+pub struct Causal<O: Operation> {
     network: Network<Message>,
-    storage: Storage<Op>,
-    weak_replication: WeakReplication<Op>,
+    storage: Storage<O>,
+    weak_replication: WeakReplication<O>,
 }
 
 // TODO: this single message loop could become a point of contention...
 // maybe instead send the messages to the components via channels?
 // or just spawn a task for ones that block the loop...
 #[async_trait]
-impl MsgHandler<Message> for Causal {
+impl<O: Operation> MsgHandler<Message> for Causal<O> {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
         match msg.component {
             Component::WeakReplication => {
@@ -29,9 +29,9 @@ impl MsgHandler<Message> for Causal {
     }
 }
 
-impl Causal {
+impl<O: Operation> Causal<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new();
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
@@ -52,8 +52,8 @@ impl Causal {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut weak_replication_events: Receiver<WeakEvent<Op>>,
-        api: Box<dyn API<Op>>,
+        mut weak_replication_events: Receiver<WeakEvent<O>>,
+        api: Box<dyn API<O>>,
     ) {
         let mut api_events = api.start().await;
         let proto = self.clone();

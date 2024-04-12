@@ -11,21 +11,47 @@ mod storage;
 /// The different protocols
 mod protocols;
 
-use std::env;
-use api::http::HttpApi;
+use clap::Parser;
 
-use lazy_static::lazy_static;
+use api::http::HttpApi;
+use storage::counters::CounterOp;
+
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
-lazy_static! {
-    static ref CLUSTER_SIZE: u32 = env::args().skip(1).next().map(|s| s.parse::<u32>().unwrap()).unwrap();
-    static ref CLUSTER_ADDR: Option<String> = env::args().skip(2).next();
+#[derive(Parser)]
+#[command(version = "1.0", about = "jonathan's hybrid consistency prototype", long_about = None)]
+struct Arguments {
+    #[arg(short = 'c', long = "cluster-size")]
+    cluster_size: u32,
+
+    #[arg(short = 'a', long = "addr")]
+    cluster_addr: Option<String>,
+
+    #[arg(short = 'p', long = "proto")]
+    protocol: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let _demon = protocols::demon::DeMon::new(CLUSTER_ADDR.clone(), *CLUSTER_SIZE, Box::new(HttpApi{})).await;
-    println!("Started DeMon.");
+    let args = Arguments::parse();
+
+    match &args.protocol[..] {
+        "demon" => {
+            protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+        },
+        "strict" => {
+            protocols::strong::Strong::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+        },
+        "causal" => {
+            protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+        },
+        "redblue" => {
+            protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+        },
+        _ => panic!("unknown protocol {:?}", args.protocol.clone()),
+    };
+
+    println!("Started Server.");
 
 
     // listen for termination signals

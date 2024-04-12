@@ -3,25 +3,22 @@ use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc};
 
-use super::{Op, TransactionId, Component, Message};
+use super::{TransactionId, Component, Message};
 
 /// TODO: A RedBlue implementeation
-pub struct RedBlue {
+pub struct RedBlue<O: Operation> {
     network: Network<Message>,
-    storage: Storage<Op>,
-    sequencer: Sequencer<Transaction<Op>>,
-    weak_replication: WeakReplication<Op>,
+    storage: Storage<O>,
+    sequencer: Sequencer<Transaction<O>>,
+    weak_replication: WeakReplication<O>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
     /// Strong client requests wait here for transaction completion.
-    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<Op>>>>>,
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<O>>>>>,
 }
 
-// TODO: this single message loop could become a point of contention...
-// maybe instead send the messages to the components via channels?
-// or just spawn a task for ones that block the loop...
 #[async_trait]
-impl MsgHandler<Message> for RedBlue {
+impl<O: Operation> MsgHandler<Message> for RedBlue<O> {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
         match msg.component {
             Component::Sequencer => {
@@ -34,9 +31,9 @@ impl MsgHandler<Message> for RedBlue {
     }
 }
 
-impl RedBlue {
+impl<O: Operation> RedBlue<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
@@ -78,9 +75,9 @@ impl RedBlue {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut sequencer_events: Receiver<SequencerEvent<Transaction<Op>>>,
-        mut weak_replication_events: Receiver<WeakEvent<Op>>,
-        api: Box<dyn API<Op>>,
+        mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
+        mut weak_replication_events: Receiver<WeakEvent<O>>,
+        api: Box<dyn API<O>>,
     ) {
         let my_id = self.network.my_id().await;
         let mut api_events = api.start().await;

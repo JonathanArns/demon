@@ -1,25 +1,25 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, Response, Transaction}, weak_replication::Snapshot};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, Operation, Response, Transaction}, weak_replication::Snapshot};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex}};
 use std::{collections::HashMap, sync::Arc};
 
-use super::{Op, TransactionId, Component, Message};
+use super::{TransactionId, Component, Message};
 
 /// A basic deterministic implementation of strictly serializable replication
-pub struct Strong {
+pub struct Strong<O: Operation> {
     network: Network<Message>,
-    storage: Storage<Op>,
-    sequencer: Sequencer<Transaction<Op>>,
+    storage: Storage<O>,
+    sequencer: Sequencer<Transaction<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     /// Strong client requests wait here for transaction completion.
-    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<Op>>>>>,
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<O>>>>>,
 }
 
 // TODO: this single message loop could become a point of contention...
 // maybe instead send the messages to the components via channels?
 // or just spawn a task for ones that block the loop...
 #[async_trait]
-impl MsgHandler<Message> for Strong {
+impl<O: Operation> MsgHandler<Message> for Strong<O> {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
         match msg.component {
             Component::Sequencer => {
@@ -32,9 +32,9 @@ impl MsgHandler<Message> for Strong {
     }
 }
 
-impl Strong {
+impl<O: Operation> Strong<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<Op>>) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size).await.unwrap();
         let storage = Storage::new();
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
@@ -66,8 +66,8 @@ impl Strong {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut sequencer_events: Receiver<SequencerEvent<Transaction<Op>>>,
-        api: Box<dyn API<Op>>,
+        mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
+        api: Box<dyn API<O>>,
     ) {
         let mut api_events = api.start().await;
         let proto = self.clone();

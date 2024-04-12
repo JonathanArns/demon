@@ -4,7 +4,7 @@ services:
     container_name: bob
     hostname: bob
     build: .
-    command: demon 3
+    command: demon --cluster-size 3 --proto demon
     ports:
       - 8080:80
 
@@ -12,7 +12,7 @@ services:
     container_name: alice
     hostname: alice
     build: .
-    command: demon 3 bob:1234
+    command: demon --cluster-size 3 --proto demon --addr bob:1234
     ports:
       - 8081:80
     environment:
@@ -24,7 +24,7 @@ services:
     container_name: fabi
     hostname: fabi
     build: .
-    command: demon 3 bob:1234
+    command: demon --cluster-size 3 --proto demon --addr bob:1234
     ports:
       - 8082:80
     depends_on:
