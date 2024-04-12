@@ -4,8 +4,6 @@ import requests
 import sys
 import time
 
-query_mode = "weak"
-
 addr = None
 addrs_to_try = [
     "localhost:80",
@@ -28,7 +26,6 @@ else:
 
 def process_input(line):
     global addr
-    global query_mode
     parts = line.split(" ", 1)
     command = parts[0]
     args = parts[1] if len(parts) > 1 else ""
@@ -49,32 +46,18 @@ def process_input(line):
             print("could not connect")
         return
 
-    elif "weak" == command or "w" == command:
-        query_mode = "weak"
-        if args:
-            query = args
-        else:
-            return
-
-    elif "strong" == command or "s" == command:
-        query_mode = "strong"
-        if args:
-            query = args
-        else:
-            return
-
     elif "test" == command:
         run_tests()
         return
 
     if not addr:
         print(f"not connected. connect with `addr <address>`")
-    resp = requests.post(f"http://{addr}/{query_mode}", data=query)
+    resp = requests.post(f"http://{addr}/query", data=query)
     print(resp.text)
 
 def run_tests():
-    run_test("fabi's deadlock", ["1+1", "w r1", "1+12", "r1", "s r1", "r1", "1+2", "1-12", "r1", "1=4", "r1", "w 2+1", "r2", "2=4", "s 2=7"])
-    run_test("fabi's deadlock 2", ["w 1=1", "s 1=2", "1+2", "r2", "r1", "w 1=1", "r1", "s 1=2"])
+    run_test("fabi's deadlock", ["1+1", "r1", "1+12", "r1", "r1", "r1", "1+2", "1-12", "r1", "1=4", "r1", "2+1", "r2", "2=4", "2=7"])
+    run_test("fabi's deadlock 2", ["1=1", "1=2", "1+2", "r2", "r1", "1=1", "r1", "1=2"])
 
 def run_test(name, scenario):
     global addr

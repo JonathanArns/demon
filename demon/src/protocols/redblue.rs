@@ -88,7 +88,7 @@ impl RedBlue {
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
-                if query.is_semiserializable_strong() {
+                if query.is_red() {
                     // strong operation
                     let id = demon.generate_transaction_id().await;
                     let snapshot = demon.choose_transaction_snapshot().await;
