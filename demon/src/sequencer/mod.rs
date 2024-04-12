@@ -1,4 +1,4 @@
-use std::{ops::RangeBounds, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use omnipaxos::{messages::Message as PaxosMessage, storage::Entry, util::LogEntry, ClusterConfig, OmniPaxos, OmniPaxosConfig, ServerConfig};
 use omnipaxos_storage::memory_storage::MemoryStorage;
@@ -16,7 +16,6 @@ enum SequencerMsg<T: Entry> {
 #[derive(Debug, Clone)]
 pub enum SequencerEvent<T> {
     /// Is triggered whenever the decided index increases.
-    /// Contains the index range of newly decided entries.
     Decided(Vec<T>),
 }
 
@@ -133,27 +132,6 @@ where
         }).collect::<Vec<_>>();
         if messages.len() > 0 {
             self.network.send_batch(messages).await;
-        }
-    }
-
-    /// Read decided transactions in a range from the log.
-    /// This might return fewer entries than the range's length, for example if some entries are
-    /// not decided yet, or if there are omnipaxos internal entries there.
-    pub async fn read<R: RangeBounds<u64>>(&self, range: R) -> Vec<T> {
-        if let Some(entries) = self.omnipaxos.lock().await.read_entries(range) {
-            entries.into_iter().filter(|e| {
-                match e {
-                    LogEntry::Decided(_) => true,
-                    _ => false,
-                }
-            }).map(|e| {
-                match e {
-                    LogEntry::Decided(t) => t,
-                    _ => unreachable!("should have been filtered out"),
-                }
-            }).collect()
-        } else {
-            vec![]
         }
     }
 
