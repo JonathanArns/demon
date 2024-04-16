@@ -1,6 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 use tokio::sync::RwLock;
-use super::{Operation, Response};
+use super::Response;
+use crate::rdts::Operation;
 
 /// A naive storage implementation meant for non-hybrid consistency models.
 #[derive(Debug)]

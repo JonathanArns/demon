@@ -5,20 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use super::Operation;
 
-/// Prelim def of a key
 pub type Key = u64;
-/// Prelim def of a stored Value
 pub type Value = i64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CounterOp {
-    /// weak
     Read{key: Key},
-    /// weak
     Add{key: Key, val: Value},
-    /// weak
     Subtract{key: Key, val: Value},
-    /// strong
     Set{key: Key, val: Value},
 }
 
@@ -53,6 +47,20 @@ impl Operation for CounterOp {
         }
     }
 
+    fn is_por_conflicting(&self, other: &Self) -> bool {
+        match *self {
+            Self::Read{..} => false,
+            Self::Add{key: k1, ..} | Self::Subtract{key: k1, ..} => match *other {
+                Self::Set{key: k2, ..} => k1 == k2,
+                _ => false,
+            },
+            Self::Set{key: k1, ..} => match *other {
+                Self::Add{key: k2, ..} | Self::Subtract{key: k2, ..} | Self::Set{key: k2, ..} => k1 == k2,
+                _ => false,
+            },
+        }
+    }
+
     fn parse(text: &str) -> anyhow::Result<Self> {
         if let Some((key, val)) = text.split_once("+") {
             let key = key.parse::<Key>()?;
@@ -73,7 +81,7 @@ impl Operation for CounterOp {
                     let key = operands.parse::<Key>()?;
                     Ok(CounterOp::Read{key})
                 },
-                _ => Err(anyhow!("bad query"))
+                _ => Err(anyhow!("bad query")),
             }
         }
     }

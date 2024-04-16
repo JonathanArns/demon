@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{redblue::Storage, Response, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{unistore::Storage, Response, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
@@ -14,7 +14,7 @@ struct TaggedBlueOp<O> {
     transaction_count: usize,
 }
 
-pub struct RedBlue<O: Operation> {
+pub struct UniStore<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
@@ -27,7 +27,7 @@ pub struct RedBlue<O: Operation> {
 }
 
 #[async_trait]
-impl<O: Operation> MsgHandler<Message> for RedBlue<O> {
+impl<O: Operation> MsgHandler<Message> for UniStore<O> {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
         match msg.component {
             Component::Sequencer => {
@@ -40,7 +40,7 @@ impl<O: Operation> MsgHandler<Message> for RedBlue<O> {
     }
 }
 
-impl<O: Operation> RedBlue<O> {
+impl<O: Operation> UniStore<O> {
     /// Creates and starts a new DeMon node.
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size).await.unwrap();

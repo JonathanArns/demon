@@ -1,27 +1,14 @@
 use std::fmt::Debug;
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use omnipaxos::storage::{Entry, NoSnapshot};
 
-use crate::{protocols::TransactionId, weak_replication::Snapshot};
+use crate::{protocols::TransactionId, rdts::Operation, weak_replication::Snapshot};
 
-pub mod counters;
 pub mod demon;
 pub mod basic;
 pub mod redblue;
-
-/// A generic operations first approach to defining replicated data types.
-pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
-    type State: Default + Clone + Sync + Send;
-    type ReadVal: Clone + Serialize + Debug + Sync + Send;
-
-    /// Parse a query string to an operation, or return None for bad queries.
-    fn parse(text: &str) -> anyhow::Result<Self>;
-    fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal>;
-    fn is_writing(&self) -> bool;
-    fn is_semiserializable_strong(&self) -> bool;
-    fn is_red(&self) -> bool;
-}
+pub mod unistore;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Response<O: Operation> {

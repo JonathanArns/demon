@@ -1,7 +1,8 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use crate::{network::NodeId, weak_replication::{TaggedEntry, Snapshot}};
-use super::{Operation, Response, Transaction};
+use super::{Response, Transaction};
+use crate::rdts::Operation;
 
 /// A deterministic in-memory storage layer, that combines weak and strong operations.
 ///

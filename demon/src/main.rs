@@ -8,13 +8,15 @@ mod sequencer;
 mod weak_replication;
 /// The storage and query execution layer.
 mod storage;
+/// RDT definitions.
+mod rdts;
 /// The different protocols
 mod protocols;
 
 use clap::Parser;
 
 use api::http::HttpApi;
-use storage::counters::CounterOp;
+use rdts::counters::CounterOp;
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
@@ -47,6 +49,9 @@ async fn main() {
         },
         "redblue" => {
             protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+        },
+        "unistore" => {
+            protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
         },
         _ => panic!("unknown protocol {:?}", args.protocol.clone()),
     };
