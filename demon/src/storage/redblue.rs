@@ -38,4 +38,8 @@ impl<O: Operation> Storage<O> {
         let output = t.op.apply(&mut *self.state.write().await);
         Response{ value: output }
     }
+
+    pub async fn get_current_snapshot(&self) -> Snapshot {
+        self.current_snapshot.read().await.clone()
+    }
 }

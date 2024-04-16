@@ -2,7 +2,7 @@ use crate::{api::API, network::{MsgHandler, Network, NodeId}, sequencer::{Sequen
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{TransactionId, Component, Message};
 
@@ -14,14 +14,13 @@ struct TaggedBlueOp<O> {
     transaction_count: usize,
 }
 
-/// TODO: A RedBlue implementeation
 pub struct RedBlue<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
     weak_replication: WeakReplication<TaggedBlueOp<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
-    next_transaction_snapshot: Arc<RwLock<Snapshot>>,
+    quorum_replicated_snapshot: Arc<RwLock<Snapshot>>,
     decided_transaction_count: Arc<RwLock<usize>>,
     /// Strong client requests wait here for transaction completion.
     waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<O>>>>>,
@@ -56,7 +55,7 @@ impl<O: Operation> RedBlue<O> {
             sequencer,
             weak_replication,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
-            next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
+            quorum_replicated_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
             decided_transaction_count: Default::default(),
             waiting_transactions: Default::default(),
         });
@@ -77,13 +76,22 @@ impl<O: Operation> RedBlue<O> {
         id
     }
 
-    /// Chooses the snapshot for the next transaction proposed at this node.
-    async fn choose_transaction_snapshot(&self) -> Snapshot {
-        self.next_transaction_snapshot.read().await.clone()
-    }
-
     async fn inc_transaction_count(&self, amount: usize) {
         *self.decided_transaction_count.write().await += amount;
+    }
+
+    /// Chooses the snapshot for the next transaction proposed at this node
+    /// and waits until that snapshot is quorum replicated.
+    /// This is required in RedBlue and PoR for liveness and causality.
+    async fn snapshot_barrier(&self) -> Snapshot {
+        let snapshot = self.storage.get_current_snapshot().await;
+        loop {
+            if !snapshot.greater(&*self.quorum_replicated_snapshot.read().await) {
+                break
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        snapshot
     }
 
     /// Process events from the components.
@@ -102,11 +110,14 @@ impl<O: Operation> RedBlue<O> {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_red() {
                     // strong operation
-                    let id = proto.generate_transaction_id().await;
-                    let snapshot = proto.choose_transaction_snapshot().await;
-                    let transaction = Transaction { id, snapshot, op: query };
-                    proto.sequencer.append(transaction).await;
-                    proto.waiting_transactions.lock().await.insert(id, result_sender);
+                    let protocol = proto.clone();
+                    tokio::spawn(async move {
+                        let id = protocol.generate_transaction_id().await;
+                        let snapshot = protocol.snapshot_barrier().await;
+                        let transaction = Transaction { id, snapshot, op: query };
+                        protocol.sequencer.append(transaction).await;
+                        protocol.waiting_transactions.lock().await.insert(id, result_sender);
+                    });
                 } else {
                     // weak operation
                     let result = proto.storage.exec_blue(query.clone(), my_id).await;
@@ -168,7 +179,7 @@ impl<O: Operation> RedBlue<O> {
                         }
                     },
                     WeakEvent::QuorumReplicated(snapshot) => {
-                        proto.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
+                        proto.quorum_replicated_snapshot.write().await.merge_inplace(&snapshot);
                     },
                 }
             }
