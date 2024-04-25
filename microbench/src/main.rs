@@ -8,7 +8,8 @@ use rand::{Rng, thread_rng};
 // benchmark settings
 const STRONG_RATIO: f64 = 0.3;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
-const NUM_CLIENTS: usize = 100;
+const NUM_CLIENTS: usize = 10;
+const NUM_REQUESTS: usize = 10;
 
 lazy_static!{
     static ref TARGET_DOMAINS: Vec<String> = env::args().skip(1).collect();
@@ -35,7 +36,7 @@ async fn main() {
 async fn run_client(domain: &str) {
     let client = reqwest::Client::new();
     let mut measurements = vec![];
-    for _ in 0..1000 {
+    for _ in 0..NUM_REQUESTS {
         let query = generate_query();
         let start_time = Instant::now();
         let response = client.post(format!("{}/query", domain))

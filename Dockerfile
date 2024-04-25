@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id="reg-${TARGETPLATFORM
 FROM debian:bookworm-slim
 
 # install OS dependencies
-RUN apt-get update && apt-get install -y ca-certificates libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libssl-dev iproute2 && rm -rf /var/lib/apt/lists/*
 
 # copy the build artifact from the build cache
 COPY --from=build /workspace/bin/demon /usr/local/bin/demon
