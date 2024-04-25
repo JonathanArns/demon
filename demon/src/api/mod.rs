@@ -1,7 +1,7 @@
 use axum::async_trait;
 use tokio::sync::{mpsc::Receiver, oneshot::Sender};
 
-use crate::{rdts::Operation, storage::Response};
+use crate::{rdts::Operation, storage::QueryResult};
 
 pub mod http;
 
@@ -9,5 +9,5 @@ pub mod http;
 pub trait API<O: Operation>: Send {
     /// Runs the API and returns (weak, strong) receivers for new requests.
     /// New requests come with a oneshot channel sender for the response.
-    async fn start(self: Box<Self>) -> Receiver<(O, Sender<Response<O>>)>;
+    async fn start(self: Box<Self>) -> Receiver<(O, Sender<QueryResult<O>>)>;
 }

@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, Response, Transaction}, weak_replication::Snapshot};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, QueryResult, Transaction}, weak_replication::Snapshot};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex}};
 use std::{collections::HashMap, sync::Arc};
@@ -12,7 +12,7 @@ pub struct Strict<O: Operation> {
     sequencer: Sequencer<Transaction<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     /// Strong client requests wait here for transaction completion.
-    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<O>>>>>,
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<QueryResult<O>>>>>,
 }
 
 // TODO: this single message loop could become a point of contention...

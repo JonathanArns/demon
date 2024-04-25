@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{redblue::Storage, Response, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{redblue::Storage, QueryResult, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
@@ -23,7 +23,7 @@ pub struct RedBlue<O: Operation> {
     quorum_replicated_snapshot: Arc<RwLock<Snapshot>>,
     decided_transaction_count: Arc<RwLock<usize>>,
     /// Strong client requests wait here for transaction completion.
-    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<Response<O>>>>>,
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<QueryResult<O>>>>>,
 }
 
 #[async_trait]

@@ -11,7 +11,7 @@ pub mod redblue;
 pub mod unistore;
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Response<O: Operation> {
+pub struct QueryResult<O: Operation> {
     pub value: Option<O::ReadVal>,
 }
 

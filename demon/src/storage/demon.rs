@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use crate::{network::NodeId, weak_replication::{TaggedEntry, Snapshot}};
-use super::{Response, Transaction};
+use super::{QueryResult, Transaction};
 use crate::rdts::Operation;
 
 /// A deterministic in-memory storage layer, that combines weak and strong operations.
@@ -38,7 +38,7 @@ impl<O: Operation> Storage<O> {
     /// Executes a weak query from the client.
     /// 
     /// Returns possible read value.
-    pub async fn exec_weak_query(&self, op: O, from: NodeId) -> Response<O> {
+    pub async fn exec_weak_query(&self, op: O, from: NodeId) -> QueryResult<O> {
         let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
         let mut latch = self.uncommitted_weak_ops.write().await;
 
@@ -65,11 +65,11 @@ impl<O: Operation> Storage<O> {
             };
             latch.push(tagged_op);
         }
-        Response{ value: output }
+        QueryResult{ value: output }
     }
 
     /// Stores and executes a transaction, returning possible read values.
-    pub async fn exec_transaction(&self, t: Transaction<O>) -> Response<O> {
+    pub async fn exec_transaction(&self, t: Transaction<O>) -> QueryResult<O> {
         // wait until all required weak ops are here
         loop {
             {
@@ -110,6 +110,6 @@ impl<O: Operation> Storage<O> {
 
         // execute the transaction
         let output = t.op.apply(&mut state_latch);
-        Response{ value: output }
+        QueryResult{ value: output }
     }
 }

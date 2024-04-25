@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 use tokio::sync::RwLock;
-use super::Response;
+use super::QueryResult;
 use crate::rdts::Operation;
 
 /// A naive storage implementation meant for non-hybrid consistency models.
@@ -17,8 +17,8 @@ impl<O: Operation> Storage<O> {
     }
 
     /// Executes a blue operation.
-    pub async fn exec(&self, op: O) -> Response<O> {
+    pub async fn exec(&self, op: O) -> QueryResult<O> {
         let output = op.apply(&mut *self.state.write().await);
-        Response{ value: output }
+        QueryResult{ value: output }
     }
 }
