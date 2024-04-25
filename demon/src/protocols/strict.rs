@@ -77,8 +77,8 @@ impl<O: Operation> Strict<O> {
                 let id = proto.generate_transaction_id().await;
                 let snapshot = Snapshot::new(&[]); // dummy snapshot, because we don't need it
                 let transaction = Transaction { id, snapshot, op: query };
-                proto.sequencer.append(transaction).await;
                 proto.waiting_transactions.lock().await.insert(id, result_sender);
+                proto.sequencer.append(transaction).await;
             }
         });
         let proto = self.clone();

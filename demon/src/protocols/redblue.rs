@@ -115,8 +115,8 @@ impl<O: Operation> RedBlue<O> {
                         let id = protocol.generate_transaction_id().await;
                         let snapshot = protocol.snapshot_barrier().await;
                         let transaction = Transaction { id, snapshot, op: query };
-                        protocol.sequencer.append(transaction).await;
                         protocol.waiting_transactions.lock().await.insert(id, result_sender);
+                        protocol.sequencer.append(transaction).await;
                     });
                 } else {
                     // weak operation
@@ -138,8 +138,8 @@ impl<O: Operation> RedBlue<O> {
                 let e = sequencer_events.recv().await.unwrap();
                 match e {
                     SequencerEvent::Decided(decided_entries) => {
-                        // we might track causality from red to blue ops slightly over-conservatively, but
-                        // better this, than losing convergence
+                        // we might track causality from red to blue ops slightly over-conservatively,
+                        // but better this, than losing convergence.
                         proto.inc_transaction_count(decided_entries.len()).await;
                         for transaction in decided_entries {
                             let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);

@@ -115,8 +115,8 @@ impl<O: Operation> UniStore<O> {
                         let id = protocol.generate_transaction_id().await;
                         let snapshot = protocol.snapshot_barrier().await;
                         let transaction = Transaction { id, snapshot, op: query };
-                        protocol.sequencer.append(transaction).await;
                         protocol.waiting_transactions.lock().await.insert(id, result_sender);
+                        protocol.sequencer.append(transaction).await;
                     });
                 } else {
                     // weak operation

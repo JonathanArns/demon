@@ -97,8 +97,8 @@ impl<O: Operation> DeMon<O> {
                     let id = demon.generate_transaction_id().await;
                     let snapshot = demon.choose_transaction_snapshot().await;
                     let transaction = Transaction { id, snapshot, op: query };
-                    demon.sequencer.append(transaction).await;
                     demon.waiting_transactions.lock().await.insert(id, result_sender);
+                    demon.sequencer.append(transaction).await;
                 } else {
                     // weak operation
                     let result = demon.storage.exec_weak_query(query.clone(), my_id).await;

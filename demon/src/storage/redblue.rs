@@ -23,7 +23,9 @@ impl<O: Operation> Storage<O> {
     pub async fn exec_blue(&self, op: O, from: NodeId) -> QueryResult<O> {
         let mut snapshot = self.current_snapshot.write().await;
         let output = op.apply(&mut *self.state.write().await);
-        snapshot.increment(from, 1);
+        if op.is_writing() {
+            snapshot.increment(from, 1);
+        }
         QueryResult{ value: output }
     }
 
