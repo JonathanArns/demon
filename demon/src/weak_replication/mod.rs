@@ -116,6 +116,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             _phantom: PhantomData,
         };
         tokio::task::spawn(weak_replication.clone().run_gossip());
+        tokio::task::spawn(weak_replication.clone().run_gc());
         (weak_replication, receiver)
     }
 
@@ -197,9 +198,36 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         log.push(locally_ordered_entry);
     }
 
+    /// Performs garbage collection.
+    async fn collect_garbage(&self) {
+        let peer_latch = self.peer_snapshots.lock().await;
+        let current_latch = self.current_snapshot.lock().await;
+        let mut fully_replicated_snapshot = vec![];
+        for i in 0..current_latch.vec.len() {
+            let mut values = vec![current_latch.vec[i]];
+            for peer in peer_latch.values() {
+                values.push(peer.vec[i]);
+            }
+            values.sort_unstable();
+            fully_replicated_snapshot.push(values[0]);
+        }
+        let fully_replicated_snapshot = Snapshot{vec: fully_replicated_snapshot};
+
+        let mut logs_latch = self.logs.write().await;
+        for id in self.network.nodes().await {
+            let (offset, log) = logs_latch.get_mut(&id).unwrap();
+            let snapshot_offset = fully_replicated_snapshot.get(id) as usize;
+            if *offset < snapshot_offset {
+                let diff = snapshot_offset - *offset;
+                *offset = snapshot_offset;
+                log.drain(0..diff);
+            }
+        }
+    }
+
     /// Re-computes the quorum_replicated_snapshot.
     ///
-    /// Returns `Some(snapshot)` iff the snapshot increased.
+    /// Returns `Some(snapshot)` if the snapshot increased.
     async fn update_quorum_replicated_snapshot(&self) -> Option<Snapshot> {
         let mut qs_latch = self.quorum_replicated_snapshot.lock().await;
         let peer_latch = self.peer_snapshots.lock().await;
@@ -227,10 +255,20 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     /// Should be called with a cloned handle to the sequencer.
     async fn run_gossip(self) {
         loop {
-            tokio::time::sleep(Duration::from_micros(100_000)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             let payload = bincode::serialize(&WeakMsg::<T>::Snapshot(self.current_snapshot.lock().await.clone())).unwrap();
             let msg = Message{component: Component::WeakReplication, payload};
             self.network.broadcast(msg).await;
+        }
+    }
+
+    /// Periodically runs garbage collection.
+    ///
+    /// Should be called with a cloned handle to the sequencer.
+    async fn run_gc(self) {
+        loop {
+            tokio::time::sleep(Duration::from_millis(10_000)).await;
+            self.collect_garbage().await;
         }
     }
 }
