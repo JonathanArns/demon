@@ -79,6 +79,7 @@ where
             decided_idx: Arc::new(Mutex::new(0)),
         };
         tokio::task::spawn(sequencer.clone().drive_omnipaxos());
+        tokio::task::spawn(sequencer.clone().run_gc());
         (sequencer, receiver)
     }
 
@@ -150,6 +151,16 @@ where
             if messages.len() > 0 {
                 self.network.send_batch(messages).await;
             }
+        }
+    }
+
+    /// Periodically trims the log.
+    async fn run_gc(self) {
+        loop {
+            tokio::time::sleep(Duration::from_millis(10_000)).await;
+            let mut latch = self.omnipaxos.lock().await;
+            // this is safe to run on all nodes, since it only actually happens on the leader in omnipaxos
+            let _ = latch.trim(None);
         }
     }
 }
