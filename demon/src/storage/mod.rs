@@ -6,6 +6,7 @@ use omnipaxos::storage::{Entry, NoSnapshot};
 use crate::{protocols::TransactionId, rdts::Operation, weak_replication::Snapshot};
 
 pub mod demon;
+pub mod demon_old;
 pub mod basic;
 pub mod redblue;
 pub mod unistore;

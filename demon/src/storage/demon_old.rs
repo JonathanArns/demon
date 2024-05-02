@@ -6,12 +6,7 @@ use crate::rdts::Operation;
 
 /// A deterministic in-memory storage layer, that combines weak and strong operations.
 ///
-/// This is supposed to be a less naive implementation, that keeps a committed and an applied
-/// state and only re-executes conflicting operations.
-///
-/// TODO: future possible optimization: batch strong operations
-/// TODO: future optimization: only do all of the rollback logic, if it is necessary (the transaction
-/// snapshot is between weak and strong state)
+/// This is supposed to be a very naive, but correct implementation.
 #[derive(Debug)]
 pub struct Storage<O: Operation> {
     /// Weak operations that are not part of a transaction snapshot yet.
@@ -22,8 +17,6 @@ pub struct Storage<O: Operation> {
     latest_transaction_snapshot: Arc<RwLock<Snapshot>>,
     /// The state at the latest transaction snapshot.
     latest_transaction_snapshot_state: Arc<RwLock<O::State>>,
-    /// The latest weak snapshot
-    latest_weak_snapshot_state: Arc<RwLock<O::State>>,
 }
 
 impl<O: Operation> Storage<O> {
@@ -32,7 +25,6 @@ impl<O: Operation> Storage<O> {
             uncommitted_weak_ops: Default::default(),
             latest_transaction_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
             latest_transaction_snapshot_state: Default::default(),
-            latest_weak_snapshot_state: Default::default(),
         }
     }
 
@@ -40,7 +32,6 @@ impl<O: Operation> Storage<O> {
     ///
     /// To be called for all weak queries that are delivered by weak replication.
     pub async fn exec_remote_weak_query(&self, op: TaggedEntry<O>) {
-        op.value.apply(&mut *self.latest_weak_snapshot_state.write().await);
         self.uncommitted_weak_ops.write().await.push(op);
     }
 
@@ -48,15 +39,20 @@ impl<O: Operation> Storage<O> {
     /// 
     /// Returns possible read value.
     pub async fn exec_weak_query(&self, op: O, from: NodeId) -> QueryResult<O> {
-        let mut state_latch = self.latest_weak_snapshot_state.write().await;
+        let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
+        let mut latch = self.uncommitted_weak_ops.write().await;
 
+        // TODO: is this correct? since we have locked the weak ops...
+        let mut state = self.latest_transaction_snapshot_state.read().await.clone(); // TODO: execute on the correct state
+        for op in latch.iter().filter(|o| o.value.is_conflicting(&op)) {
+            op.value.apply(&mut state);
+        }
+        
         // now we execute the actual query and store the write ops
-        let output = op.apply(&mut state_latch);
+        let output = op.apply(&mut state);
         if op.is_writing() {
-            // compute the weak log idx that this query will get
-            let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
-            let mut log_latch = self.uncommitted_weak_ops.write().await;
-            let next_op_idx = log_latch.iter()
+            // compute the weak log idx that the first write operation in this query will get
+            let next_op_idx = latch.iter()
                 .filter(|o| o.node == from)
                 .map(|o| o.idx)
                 .max()
@@ -67,7 +63,7 @@ impl<O: Operation> Storage<O> {
                 node: from,
                 idx: next_op_idx,
             };
-            log_latch.push(tagged_op);
+            latch.push(tagged_op);
         }
         QueryResult{ value: output }
     }
@@ -78,8 +74,8 @@ impl<O: Operation> Storage<O> {
         loop {
             {
                 let mut has_all_entries = true;
-                let snapshot_latch = self.latest_transaction_snapshot.read().await;
                 let weak_latch = self.uncommitted_weak_ops.read().await;
+                let snapshot_latch = self.latest_transaction_snapshot.read().await;
                 for (node, len) in t.snapshot.entries() {
                     if snapshot_latch.get(node) >= len {
                         continue
@@ -95,17 +91,12 @@ impl<O: Operation> Storage<O> {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-
-        // get latches
-        let mut weak_state_latch = self.latest_weak_snapshot_state.write().await;
         let mut snapshot_latch = self.latest_transaction_snapshot.write().await;
-        let mut weak_latch = self.uncommitted_weak_ops.write().await;
-        let mut state_latch = self.latest_transaction_snapshot_state.write().await;
-
-        // update snapshot
         snapshot_latch.merge_inplace(&t.snapshot);
 
         // update local snapshot state and filter weak ops
+        let mut weak_latch = self.uncommitted_weak_ops.write().await;
+        let mut state_latch = self.latest_transaction_snapshot_state.write().await;
         let mut i = 0;
         while i < weak_latch.len() {
             let op = &weak_latch[i];
@@ -119,15 +110,6 @@ impl<O: Operation> Storage<O> {
 
         // execute the transaction
         let output = t.op.apply(&mut state_latch);
-
-        // update weak snapshot state
-        t.op.rollback_conflicting_state(&state_latch, &mut weak_state_latch);
-        for op in weak_latch.iter() {
-            if t.op.is_conflicting(&op.value) {
-                op.value.apply(&mut weak_state_latch);
-            }
-        }
-
         QueryResult{ value: output }
     }
 }

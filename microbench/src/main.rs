@@ -11,6 +11,8 @@ const STRONG_RATIO: f64 = 0.3;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const NUM_CLIENTS: usize = 200;
 const DURATION: Duration = Duration::from_secs(3);
+/// Controls contention
+const KEY_RANGE: usize = 2;
 
 lazy_static!{
     static ref TARGET_DOMAINS: Vec<String> = env::args().skip(1).collect();
@@ -86,8 +88,9 @@ async fn run_client(mut watcher: watch::Receiver<bool>, domain: &str) -> Vec<Mea
 
 fn generate_query() -> String {
     let mut rng = thread_rng();
-    let weak_ops = ["1+1", "1-1", "r1"];
-    let strong_ops = ["1=0"];
+    let key = rng.gen_range(0..KEY_RANGE);
+    let weak_ops = [format!("{}+1", key), format!("{}-1", key), format!("r{}", key)];
+    let strong_ops = [format!("{}=0", key)];
     let strong = rng.gen_bool(STRONG_RATIO);
     let query = if strong {
         let i = rng.gen_range(0..strong_ops.len());

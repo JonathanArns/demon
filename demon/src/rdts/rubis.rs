@@ -43,6 +43,10 @@ impl Operation for RubisOp {
         todo!()
     }
 
+    fn rollback_conflicting_state(&self, source: &Self::State, target: &mut Self::State) {
+        todo!()
+    }
+
     fn is_writing(&self) -> bool {
         match *self {
             Self::RegisterUser{..} => true,

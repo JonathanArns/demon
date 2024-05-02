@@ -53,6 +53,15 @@ impl Operation for CounterOp {
         self.key() == other.key()
     }
 
+    fn rollback_conflicting_state(&self, source: &Self::State, target: &mut Self::State) {
+        let key = self.key();
+        if let Some(val) = source.get(&key) {
+            target.insert(key, *val);
+        } else {
+            target.remove(&key);
+        }
+    }
+
     fn is_writing(&self) -> bool {
         match *self {
             Self::Read{..} => false,
