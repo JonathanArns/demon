@@ -39,6 +39,10 @@ impl Operation for RubisOp {
         }
     }
 
+    fn is_conflicting(&self, other: &Self) -> bool {
+        todo!()
+    }
+
     fn is_writing(&self) -> bool {
         match *self {
             Self::RegisterUser{..} => true,

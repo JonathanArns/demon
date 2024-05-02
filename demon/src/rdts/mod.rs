@@ -12,9 +12,16 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
 
     /// Parse a query string to an operation, or return None for bad queries.
     fn parse(text: &str) -> anyhow::Result<Self>;
+    /// Applies this operation to the state and returns a result if one exists.
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal>;
+    /// Indicates that the operation is writing and thus needs to be replicated in any case.
     fn is_writing(&self) -> bool;
+    /// Indicates that this operation needs to be strong in semi-serializability.
     fn is_semiserializable_strong(&self) -> bool;
+    /// Indicates whether eitehr operation might read or overwrite the other.
+    fn is_conflicting(&self, other: &Self) -> bool;
+    /// Indicates that this operation needs to be red in RedBlue.
     fn is_red(&self) -> bool;
+    /// Indicates an ordering restriction in PoR.
     fn is_por_conflicting(&self, other: &Self) -> bool;
 }

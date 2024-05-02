@@ -16,6 +16,17 @@ pub enum CounterOp {
     Set{key: Key, val: Value},
 }
 
+impl CounterOp {
+    fn key(&self) -> Key {
+        match *self {
+            Self::Read{key} => key,
+            Self::Add{key, ..} => key,
+            Self::Subtract{key, ..} => key,
+            Self::Set{key, ..} => key,
+        }
+    }
+}
+
 impl Operation for CounterOp {
     type State = HashMap<Key, Value>;
     type ReadVal = Option<Value>;
@@ -36,6 +47,10 @@ impl Operation for CounterOp {
             Self::Subtract{..} => false,
             Self::Set{..} => true,
         }
+    }
+
+    fn is_conflicting(&self, other: &Self) -> bool {
+        self.key() == other.key()
     }
 
     fn is_writing(&self) -> bool {

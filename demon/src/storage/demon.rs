@@ -44,7 +44,7 @@ impl<O: Operation> Storage<O> {
 
         // TODO: is this correct? since we have locked the weak ops...
         let mut state = self.latest_transaction_snapshot_state.read().await.clone(); // TODO: execute on the correct state
-        for op in latch.iter() {
+        for op in latch.iter().filter(|o| o.value.is_conflicting(&op)) {
             op.value.apply(&mut state);
         }
         
