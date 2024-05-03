@@ -2,25 +2,32 @@ use std::{env, time::Duration};
 
 use lazy_static::lazy_static;
 use serde::Deserialize;
-use tokio::{self, sync::watch};
+use tokio::{self, sync::watch, time::Instant};
 use reqwest;
 use rand::{Rng, thread_rng};
 
 // benchmark settings
-const STRONG_RATIO: f64 = 0.3;
+const STRONG_RATIO: f64 = 0.10;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
-const NUM_CLIENTS: usize = 200;
+const NUM_CLIENTS: usize = 600;
+// How long the benchmark should run
 const DURATION: Duration = Duration::from_secs(3);
 /// Controls contention
-const KEY_RANGE: usize = 2;
+const KEY_RANGE: usize = 100;
 
 lazy_static!{
     static ref TARGET_DOMAINS: Vec<String> = env::args().skip(1).collect();
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct Measurement {
+struct DbResponse {
     latency: Duration,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Measurement {
+    db_latency: Duration,
+    real_latency: Duration,
 }
 
 #[tokio::main]
@@ -50,8 +57,9 @@ async fn main() {
     }
 
     println!(
-        "mean latency: {}ms, throughput: {} operations per second",
-        measurements.iter().map(|m| m.latency.as_millis() as f64).sum::<f64>() / measurements.len() as f64,
+        "mean db latency: {}ms, real latency {}ms, throughput: {} operations per second",
+        measurements.iter().map(|m| m.db_latency.as_millis() as f64).sum::<f64>() / measurements.len() as f64,
+        measurements.iter().map(|m| m.real_latency.as_millis() as f64).sum::<f64>() / measurements.len() as f64,
         measurements.len() / DURATION.as_secs() as usize,
     );
 }
@@ -65,18 +73,19 @@ async fn run_client(mut watcher: watch::Receiver<bool>, domain: &str) -> Vec<Mea
     watcher.mark_unchanged();
     loop {
         let query = generate_query();
+        let start_time = Instant::now();
         let response = client.post(format!("{}/query", domain))
             .body(query.clone())
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await;
-        let measurement: Measurement = if let Ok(r) = response {
+        let resp: DbResponse = if let Ok(r) = response {
             serde_json::from_str(&r.text().await.unwrap()).unwrap()
         } else {
             println!("timed out on operation: {:?}", query);
             return vec![]
         };
-        measurements.push(measurement);
+        measurements.push(Measurement{db_latency: resp.latency, real_latency: start_time.elapsed()});
 
         if watcher.has_changed().unwrap() {
             break
