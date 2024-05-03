@@ -10,8 +10,6 @@ use crate::rdts::Operation;
 /// state and only re-executes conflicting operations.
 ///
 /// TODO: future possible optimization: batch strong operations
-/// TODO: future optimization: only do all of the rollback logic, if it is necessary (the transaction
-/// snapshot is between weak and strong state)
 #[derive(Debug)]
 pub struct Storage<O: Operation> {
     /// Weak operations that are not part of a transaction snapshot yet.
@@ -102,18 +100,20 @@ impl<O: Operation> Storage<O> {
         let mut weak_latch = self.uncommitted_weak_ops.write().await;
         let mut state_latch = self.latest_transaction_snapshot_state.write().await;
 
-        // update snapshot
-        snapshot_latch.merge_inplace(&t.snapshot);
+        if t.snapshot.greater(&snapshot_latch) {
+            // update snapshot
+            snapshot_latch.merge_inplace(&t.snapshot);
 
-        // update local snapshot state and filter weak ops
-        let mut i = 0;
-        while i < weak_latch.len() {
-            let op = &weak_latch[i];
-            if op.is_in_snapshot(&snapshot_latch) {
-                op.value.apply(&mut state_latch);
-                weak_latch.remove(i);
-            } else {
-                i += 1;
+            // update local snapshot state and filter weak ops
+            let mut i = 0;
+            while i < weak_latch.len() {
+                let op = &weak_latch[i];
+                if op.is_in_snapshot(&snapshot_latch) {
+                    op.value.apply(&mut state_latch);
+                    weak_latch.remove(i);
+                } else {
+                    i += 1;
+                }
             }
         }
 
