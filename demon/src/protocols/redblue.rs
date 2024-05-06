@@ -85,11 +85,8 @@ impl<O: Operation> RedBlue<O> {
     /// This is required in RedBlue and PoR for liveness and causality.
     async fn snapshot_barrier(&self) -> Snapshot {
         let snapshot = self.storage.get_current_snapshot().await;
-        loop {
-            if !snapshot.greater(&*self.quorum_replicated_snapshot.read().await) {
-                break
-            }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+        while snapshot.greater(&*self.quorum_replicated_snapshot.read().await) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         snapshot
     }
@@ -162,13 +159,14 @@ impl<O: Operation> RedBlue<O> {
                     WeakEvent::Deliver(new_op) => {
                         // first, execute waiting ops that this might depend on
                         let transaction_count = *proto.decided_transaction_count.read().await;
-                        for i in 0..waiting_blue_ops.len() {
+                        let mut i = 0;
+                        while i < waiting_blue_ops.len() {
                             let op = &waiting_blue_ops[i];
                             if transaction_count >= op.value.transaction_count {
                                 let op = waiting_blue_ops.remove(i);
                                 proto.storage.exec_blue(op.value.op, op.node).await;
                             } else {
-                                break
+                                i += 1;
                             }
                         }
                         // then execute or queue this op, depending on if it needs to wait for a red operation

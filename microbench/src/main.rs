@@ -3,13 +3,13 @@ use std::{env, time::Duration};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use tokio::{self, sync::watch, time::Instant};
-use reqwest;
+use reqwest::{self, Client};
 use rand::{Rng, thread_rng};
 
 // benchmark settings
 const STRONG_RATIO: f64 = 0.10;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
-const NUM_CLIENTS: usize = 600;
+const NUM_CLIENTS: usize = 300;
 // How long the benchmark should run
 const DURATION: Duration = Duration::from_secs(3);
 /// Controls contention
@@ -36,6 +36,7 @@ async fn main() {
         panic!("missing arguments: target domain(s)");
     }
 
+    let client = Client::new();
     let (sender, watcher) = watch::channel(false);
 
     // set up the clients
@@ -43,7 +44,7 @@ async fn main() {
     let mut futures = vec![];
     for i in 0..NUM_CLIENTS {
         let watcher_handle = watcher.clone();
-        futures.push(tokio::spawn(run_client(watcher_handle, &TARGET_DOMAINS[i % TARGET_DOMAINS.len()])));
+        futures.push(tokio::spawn(run_client(watcher_handle, &TARGET_DOMAINS[i % TARGET_DOMAINS.len()], client.clone())));
     }
 
     // Run the clients for the set duration
@@ -64,8 +65,7 @@ async fn main() {
     );
 }
 
-async fn run_client(mut watcher: watch::Receiver<bool>, domain: &str) -> Vec<Measurement> {
-    let client = reqwest::Client::new();
+async fn run_client(mut watcher: watch::Receiver<bool>, domain: &str, client: Client) -> Vec<Measurement> {
     let mut measurements = vec![];
     
     // wait for the benchmark to start
@@ -82,7 +82,7 @@ async fn run_client(mut watcher: watch::Receiver<bool>, domain: &str) -> Vec<Mea
         let resp: DbResponse = if let Ok(r) = response {
             serde_json::from_str(&r.text().await.unwrap()).unwrap()
         } else {
-            println!("timed out on operation: {:?}", query);
+            println!("timed out on operation: {:?} with err: {:?}", query, response);
             return vec![]
         };
         measurements.push(Measurement{db_latency: resp.latency, real_latency: start_time.elapsed()});

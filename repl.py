@@ -50,10 +50,24 @@ def process_input(line):
         run_tests()
         return
 
+    elif "bench" == command:
+        run_bench()
+        return
+
     if not addr:
         print(f"not connected. connect with `addr <address>`")
     resp = requests.post(f"http://{addr}/query", data=query)
     print(resp.text)
+
+def run_bench():
+    settings = {
+        "num_clients": 100,
+        "strong_ratio": 0.1,
+        "key_range": 10,
+        "duration": 3,
+    }
+    resp = requests.post(f"http://{addr}/bench", json=settings)
+    print(resp.json())
 
 def run_tests():
     run_test("fabi's deadlock", ["1+1", "r1", "1+12", "r1", "r1", "r1", "1+2", "1-12", "r1", "1=4", "r1", "2+1", "r2", "2=4", "2=7"])

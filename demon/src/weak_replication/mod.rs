@@ -255,7 +255,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     /// Should be called with a cloned handle to the sequencer.
     async fn run_gossip(self) {
         loop {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(23)).await;
             let payload = bincode::serialize(&WeakMsg::<T>::Snapshot(self.current_snapshot.lock().await.clone())).unwrap();
             let msg = Message{component: Component::WeakReplication, payload};
             self.network.broadcast(msg).await;

@@ -37,21 +37,22 @@ struct Arguments {
 async fn main() {
     let args = Arguments::parse();
 
+    let api = Box::new(HttpApi{});
     match &args.protocol[..] {
         "demon" => {
-            protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+            protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
         },
         "strict" => {
-            protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+            protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
         },
         "causal" => {
-            protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+            protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
         },
         "redblue" => {
-            protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+            protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
         },
         "unistore" => {
-            protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, Box::new(HttpApi{})).await;
+            protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
         },
         _ => panic!("unknown protocol {:?}", args.protocol.clone()),
     };
