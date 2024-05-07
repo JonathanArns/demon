@@ -4,6 +4,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub mod counters;
 pub mod rubis;
+pub mod tpcc;
 
 /// A generic operations first approach to defining replicated data types.
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
@@ -18,7 +19,7 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     fn is_writing(&self) -> bool;
     /// Indicates that this operation needs to be strong in semi-serializability.
     fn is_semiserializable_strong(&self) -> bool;
-    /// Indicates whether eitehr operation might read or overwrite the other.
+    /// Indicates whether either operation might read or overwrite the other.
     fn is_conflicting(&self, other: &Self) -> bool;
     /// Takes any state in `source` that this operation might touch, and merges it into `target`.
     /// This is used to effectively roll back all operations between `source` and `target`
