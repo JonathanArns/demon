@@ -412,26 +412,56 @@ impl Operation for TpccOp {
     fn parse(text: &str) -> anyhow::Result<Self> {
         let parts = text.split(" ").collect::<Vec<_>>();
         match parts[0] {
-            "loadtuples" => {
+            "load_tuples" => {
                 Ok(Self::LoadTuples {
                     table: parts[1].to_string(),
                     tuples: parts[2].split(";").map(|s| s.to_string()).collect(),
                 })
             },
             "delivery" => {
-                todo!()
+                Ok(Self::Delivery{
+                    w_id: parts[1].parse()?,
+                    o_carrier_id: parts[2].parse()?,
+                    ol_delivery_d: parts[2].parse()?,
+                })
             },
             "new_order" => {
-                todo!()
+                Ok(Self::NewOrder {
+                    w_id: parts[1].parse()?,
+                    d_id: parts[2].parse()?,
+                    c_id: parts[3].parse()?,
+                    o_entry_d: parts[4].parse()?,
+                    i_ids: parts[5].split(",").map(|s| s.parse().unwrap()).collect(),
+                    i_w_ids: parts[6].split(",").map(|s| s.parse().unwrap()).collect(), 
+                    i_qtys: parts[7].split(",").map(|s| s.parse().unwrap()).collect(),
+                })
             },
             "order_status" => {
-                todo!()
+                Ok(Self::OrderStatus{
+                    w_id: parts[1].parse()?,
+                    d_id: parts[2].parse()?,
+                    c_id: parts[3].parse()?,
+                    c_last: parts[3].parse()?,
+                })
             },
             "payment" => {
-                todo!()
+                Ok(Self::Payment{
+                    w_id: parts[1].parse()?,
+                    d_id: parts[2].parse()?,
+                    h_amount: parts[3].parse()?,
+                    c_w_id: parts[4].parse()?,
+                    c_d_id: parts[5].parse()?,
+                    c_id: parts[6].parse()?,
+                    c_last: parts[7].parse()?,
+                    h_date: parts[8].parse()?,
+                })
             },
             "stock_level" => {
-                todo!()
+                Ok(Self::StockLevel{
+                    w_id: parts[1].parse()?,
+                    d_id: parts[2].parse()?,
+                    threshold: parts[3].parse()?,
+                })
             },
             _ => Err(anyhow!("bad query")),
         }
@@ -557,7 +587,7 @@ impl Operation for TpccOp {
                             state.stock.insert((s_w_id, s_i_id), val);
                         }
                     },
-                    "ORDER" => {
+                    "ORDERS" => {
                         for tuple in tuples {
                             let mut values = tuple.split(",").into_iter();
                             let o_id: usize = values.next().unwrap().parse().unwrap();
@@ -599,7 +629,7 @@ impl Operation for TpccOp {
                             state.order_lines.insert((ol_w_id, ol_d_id, ol_o_id, ol_number), val);
                         }
                     },
-                    _ => unreachable!("bad table name"),
+                    _ => unreachable!("bad table name: {:?}", table),
                 }
                 None
             },

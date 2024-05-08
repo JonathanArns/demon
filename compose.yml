@@ -4,7 +4,7 @@ services:
     container_name: bob
     hostname: bob
     build: .
-    command: --cluster-size 3 --proto demon
+    command: --cluster-size 3 --proto redblue -t tpcc
     cap_add:
       - NET_ADMIN
     ports:
@@ -14,7 +14,7 @@ services:
     container_name: alice
     hostname: alice
     build: .
-    command: --cluster-size 3 --proto demon --addr bob:1234
+    command: --cluster-size 3 --proto redblue -t tpcc --addr bob:1234
     cap_add:
       - NET_ADMIN
     ports:
@@ -28,7 +28,7 @@ services:
     container_name: fabi
     hostname: fabi
     build: .
-    command: --cluster-size 3 --proto demon --addr bob:1234
+    command: --cluster-size 3 --proto redblue -t tpcc --addr bob:1234
     cap_add:
       - NET_ADMIN
     ports:

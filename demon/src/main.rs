@@ -16,7 +16,7 @@ mod protocols;
 use clap::Parser;
 
 use api::http::HttpApi;
-use rdts::counters::CounterOp;
+use rdts::{counters::CounterOp, tpcc::TpccOp};
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
@@ -31,6 +31,9 @@ struct Arguments {
 
     #[arg(short = 'p', long = "proto")]
     protocol: String,
+
+    #[arg(short = 't', long = "datatype")]
+    datatype: String,
 }
 
 #[tokio::main]
@@ -38,24 +41,49 @@ async fn main() {
     let args = Arguments::parse();
 
     let api = Box::new(HttpApi{});
-    match &args.protocol[..] {
-        "demon" => {
-            protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+    match &args.datatype[..] {
+        "counter" => {
+            match &args.protocol[..] {
+                "demon" => {
+                    protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "strict" => {
+                    protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "causal" => {
+                    protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "redblue" => {
+                    protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "unistore" => {
+                    protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                _ => panic!("unknown protocol {:?}", args.protocol.clone()),
+            };
         },
-        "strict" => {
-            protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+        "tpcc" => {
+            match &args.protocol[..] {
+                "demon" => {
+                    protocols::demon::DeMon::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "strict" => {
+                    protocols::strict::Strict::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "causal" => {
+                    protocols::causal::Causal::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "redblue" => {
+                    protocols::redblue::RedBlue::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "unistore" => {
+                    protocols::unistore::UniStore::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                _ => panic!("unknown protocol {:?}", args.protocol.clone()),
+            };
         },
-        "causal" => {
-            protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
-        },
-        "redblue" => {
-            protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
-        },
-        "unistore" => {
-            protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
-        },
-        _ => panic!("unknown protocol {:?}", args.protocol.clone()),
-    };
+        _ => panic!("bad datatype argument, options are: counter, tpcc")
+    }
 
     println!("Started Server.");
 
