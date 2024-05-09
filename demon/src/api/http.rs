@@ -53,7 +53,8 @@ struct Measurement {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct BenchSettings {
+pub struct BenchSettings {
+    pub read_ratio: f64,
     pub strong_ratio: f64,
     pub num_clients: usize,
     pub key_range: usize,
@@ -108,10 +109,9 @@ async fn run_client<O: Operation>(
     watcher.wait_for(|v| *v).await.unwrap();
     watcher.mark_unchanged();
     loop {
-        let query = generate_query(&settings);
+        let query = O::gen_query(&settings);
         let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();
-        let query = O::parse(&query).unwrap();
         query_sender.send((query, result_sender)).await.unwrap();
         let _result = result_receiver.await.unwrap();
         measurements.push(Measurement{latency: start_time.elapsed()});
@@ -122,20 +122,4 @@ async fn run_client<O: Operation>(
     }
     
     measurements
-}
-
-fn generate_query(settings: &BenchSettings) -> String {
-    let mut rng = thread_rng();
-    let key = rng.gen_range(0..settings.key_range);
-    let weak_ops = [format!("{}+1", key), format!("{}-1", key), format!("r{}", key)];
-    let strong_ops = [format!("{}=0", key)];
-    let strong = rng.gen_bool(settings.strong_ratio);
-    let query = if strong {
-        let i = rng.gen_range(0..strong_ops.len());
-        strong_ops[i].to_owned()
-    } else {
-        let i = rng.gen_range(0..weak_ops.len());
-        weak_ops[i].to_owned()
-    };
-    query
 }

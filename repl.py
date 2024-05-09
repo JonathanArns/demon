@@ -61,10 +61,11 @@ def process_input(line):
 
 def run_bench():
     settings = {
+        "strong_ratio": 0.99,
+        "read_ratio": 0.0,
         "num_clients": 100,
-        "strong_ratio": 0.1,
         "key_range": 10,
-        "duration": 3,
+        "duration": 5,
     }
     resp = requests.post(f"http://{addr}/bench", json=settings)
     print(resp.json())

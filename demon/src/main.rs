@@ -16,7 +16,7 @@ mod protocols;
 use clap::Parser;
 
 use api::http::HttpApi;
-use rdts::{counters::CounterOp, tpcc::TpccOp};
+use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp};
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
@@ -42,6 +42,26 @@ async fn main() {
 
     let api = Box::new(HttpApi{});
     match &args.datatype[..] {
+        "non_neg_counter" => {
+            match &args.protocol[..] {
+                "demon" => {
+                    protocols::demon::DeMon::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "strict" => {
+                    protocols::strict::Strict::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "causal" => {
+                    protocols::causal::Causal::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "redblue" => {
+                    protocols::redblue::RedBlue::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "unistore" => {
+                    protocols::unistore::UniStore::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                _ => panic!("unknown protocol {:?}", args.protocol.clone()),
+            };
+        },
         "counter" => {
             match &args.protocol[..] {
                 "demon" => {
@@ -82,7 +102,7 @@ async fn main() {
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
-        _ => panic!("bad datatype argument, options are: counter, tpcc")
+        _ => panic!("bad datatype argument, options are: counter, non_neg_counter, tpcc")
     }
 
     println!("Started Server.");

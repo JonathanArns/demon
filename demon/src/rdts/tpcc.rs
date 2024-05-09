@@ -345,7 +345,7 @@ impl Operation for TpccOp {
 
     fn is_red(&self) -> bool {
         match *self {
-            Self::LoadTuples {..} => false,
+            Self::LoadTuples {..} => true,
             Self::Delivery {..} => todo!(),
             Self::NewOrder {..} => todo!(),
             Self::OrderStatus {..} => todo!(),
@@ -356,7 +356,7 @@ impl Operation for TpccOp {
 
     fn is_semiserializable_strong(&self) -> bool {
         match *self {
-            Self::LoadTuples {..} => false,
+            Self::LoadTuples {..} => true,
             Self::Delivery {..} => todo!(),
             Self::NewOrder {..} => todo!(),
             Self::OrderStatus {..} => todo!(),
@@ -368,11 +368,11 @@ impl Operation for TpccOp {
     fn is_writing(&self) -> bool {
         match *self {
             Self::LoadTuples {..} => true,
-            Self::Delivery {..} => todo!(),
-            Self::NewOrder {..} => todo!(),
-            Self::OrderStatus {..} => todo!(),
-            Self::Payment {..} => todo!(),
-            Self::StockLevel {..} => todo!(),
+            Self::Delivery {..} => true,
+            Self::NewOrder {..} => true,
+            Self::OrderStatus {..} => false,
+            Self::Payment {..} => true,
+            Self::StockLevel {..} => false,
         }
     }
 
@@ -638,6 +638,9 @@ impl Operation for TpccOp {
                 o_carrier_id,
                 ol_delivery_d,
             } => {
+                for d_id in 1..=10 {
+
+                }
                 todo!()
             },
             Self::NewOrder{
@@ -679,5 +682,9 @@ impl Operation for TpccOp {
                 todo!()
             },
         }
+    }
+
+    fn gen_query(settings: &crate::api::http::BenchSettings) -> Self {
+        todo!()
     }
 }

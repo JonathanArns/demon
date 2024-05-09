@@ -2,9 +2,12 @@ use std::fmt::Debug;
 
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::api::http::BenchSettings;
+
 pub mod counters;
 pub mod rubis;
 pub mod tpcc;
+pub mod non_negative_counter;
 
 /// A generic operations first approach to defining replicated data types.
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
@@ -29,4 +32,6 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     fn is_red(&self) -> bool;
     /// Indicates an ordering restriction in PoR.
     fn is_por_conflicting(&self, other: &Self) -> bool;
+    /// Used to generate benchmark workloads
+    fn gen_query(settings: &BenchSettings) -> Self;
 }

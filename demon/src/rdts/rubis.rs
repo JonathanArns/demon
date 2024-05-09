@@ -14,6 +14,7 @@ pub enum RubisOp {
     RegisterUser{id: UserId},
     Bid{user: UserId, auction: AuctionId, val: Price},
     CloseAuction{id: AuctionId},
+    // OpenAuction{},
     // BuyNow{id: AuctionId},
 }
 
@@ -162,5 +163,9 @@ impl Operation for RubisOp {
                 }
             },
         }
+    }
+
+    fn gen_query(settings: &crate::api::http::BenchSettings) -> Self {
+        todo!()
     }
 }
