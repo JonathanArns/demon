@@ -839,7 +839,7 @@ impl Operation for TpccOp {
                     h_d_id: *d_id,
                     h_amount: *h_amount,
                     h_date: h_date.to_owned(),
-                    h_data: format!("{} {}", warehouse.w_id, district.d_id),
+                    h_data: format!("{}    {}", warehouse.w_name, district.d_name),
                 });
 
                 None
