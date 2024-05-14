@@ -438,7 +438,7 @@ impl Operation for TpccOp {
                     w_id: parts[1].parse()?,
                     d_id: parts[2].parse()?,
                     c_id: parts[3].parse::<usize>().ok(),
-                    c_last: parts[3].parse()?,
+                    c_last: parts[4].parse()?,
                 })
             },
             "payment" => {
@@ -780,10 +780,10 @@ impl Operation for TpccOp {
                 let customer = if let Some(c_id) = c_id {
                     state.customers.get(&(*w_id, *d_id, *c_id)).unwrap()
                 } else {
-                    let customer_iter = state.customers.values().filter(|c| {
+                    let count = state.customers.values().filter(|c| c.c_last == *c_last).count();
+                    state.customers.values().filter(|c| {
                         c.c_last == *c_last
-                    });
-                    customer_iter.clone().skip(customer_iter.count() / 2).next().unwrap()
+                    }).skip((count / 2).min(count-1)).next().unwrap()
                 };
                 let order = state.orders.values()
                     .filter(|o| o.o_w_id == *w_id && o.o_d_id == *d_id && o.o_c_id == customer.c_id)
@@ -814,7 +814,7 @@ impl Operation for TpccOp {
                     let count = state.customers.values().filter(|c| c.c_last == *c_last).count();
                     state.customers.values_mut().filter(|c| {
                         c.c_last == *c_last
-                    }).skip(count / 2).next().unwrap()
+                    }).skip((count / 2).min(count-1)).next().unwrap()
                 };
                 customer.c_balance -= h_amount;
                 customer.c_ytd_payment += h_amount;
