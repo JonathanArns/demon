@@ -3,6 +3,7 @@ use serde::{Serialize, Deserialize};
 
 pub mod demon;
 pub mod redblue;
+pub mod redblue_modified;
 pub mod strict;
 pub mod causal;
 pub mod unistore;

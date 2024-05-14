@@ -56,6 +56,9 @@ async fn main() {
                 "redblue" => {
                     protocols::redblue::RedBlue::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
+                "redblue-mod" => {
+                    protocols::redblue_modified::RedBlueModified::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
                 "unistore" => {
                     protocols::unistore::UniStore::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
@@ -76,6 +79,9 @@ async fn main() {
                 "redblue" => {
                     protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
+                "redblue-mod" => {
+                    protocols::redblue_modified::RedBlueModified::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
                 "unistore" => {
                     protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
@@ -95,6 +101,9 @@ async fn main() {
                 },
                 "redblue" => {
                     protocols::redblue::RedBlue::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "redblue-mod" => {
+                    protocols::redblue_modified::RedBlueModified::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
                 "unistore" => {
                     protocols::unistore::UniStore::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;

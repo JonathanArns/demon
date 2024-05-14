@@ -348,11 +348,11 @@ impl Operation for TpccOp {
     fn is_red(&self) -> bool {
         match *self {
             Self::LoadTuples {..} => true,
-            Self::Delivery {..} => todo!(),
-            Self::NewOrder {..} => todo!(),
-            Self::OrderStatus {..} => todo!(),
-            Self::Payment {..} => todo!(),
-            Self::StockLevel {..} => todo!(),
+            Self::Delivery {..} => true,
+            Self::NewOrder {..} => true,
+            Self::OrderStatus {..} => false,
+            Self::Payment {..} => false,
+            Self::StockLevel {..} => false,
         }
     }
 
@@ -362,7 +362,7 @@ impl Operation for TpccOp {
             Self::Delivery {..} => false,
             Self::NewOrder {..} => true,
             Self::OrderStatus {..} => false,
-            Self::Payment {..} => true,
+            Self::Payment {..} => false,
             Self::StockLevel {..} => false,
         }
     }
@@ -389,21 +389,33 @@ impl Operation for TpccOp {
         }
     }
 
-    /// TODO: be smarter about what conflicts
     fn is_conflicting(&self, other: &Self) -> bool {
-        match *self {
-            Self::LoadTuples {..} => true,
-            Self::Delivery {..} => true,
-            Self::NewOrder {..} => true,
-            Self::OrderStatus {..} => true,
-            Self::Payment {..} => true,
-            Self::StockLevel {..} => true,
-        }
+        return true
+        // match *self {
+        //     Self::LoadTuples {..} => true,
+        //     Self::Delivery {..} => true,
+        //     Self::NewOrder { w_id: no_w_id, d_id: no_d_id, c_id: no_c_id, .. } => {
+        //         match other {
+        //             Self::Payment { w_id, d_id, c_id, .. } => {
+        //                 no_w_id == *w_id && no_d_id == *d_id && (c_id.is_none() || c_id.unwrap() == no_c_id)
+        //             },
+        //             _ => true,
+        //         }
+        //     },
+        //     Self::OrderStatus {..} => true,
+        //     Self::Payment {..} => true,
+        //     Self::StockLevel {..} => true,
+        // }
     }
 
-    /// TODO: be smarter about rolling back fewer changes
     fn rollback_conflicting_state(&self, source: &Self::State, target: &mut Self::State) {
-        *target = source.clone();
+        // match self {
+        //     Self::NewOrder { w_id, d_id, c_id, o_entry_d, i_ids, i_w_ids, i_qtys } => {
+        //         todo!()
+        //     },
+        //     _ => *target = source.clone(),
+        // }
+        *target = source.clone()
     }
 
     fn parse(text: &str) -> anyhow::Result<Self> {
@@ -820,6 +832,7 @@ impl Operation for TpccOp {
                 customer.c_ytd_payment += h_amount;
                 customer.c_payment_cnt += 1;
                 if customer.c_credit == "BC" {
+                    // TODO: use a convergent string type for c_data
                     customer.c_data = format!("{} {} {} {} {} {}|{}", customer.c_id, c_d_id, c_w_id, d_id, w_id, h_amount, customer.c_data);
                     if customer.c_data.len() > 500 {
                         customer.c_data = customer.c_data[0..500].to_owned();
