@@ -3,7 +3,6 @@ use std::time::Duration;
 use axum::{async_trait, extract::State, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::{watch, mpsc, oneshot}, time::Instant};
-use rand::{Rng, thread_rng};
 
 use crate::{rdts::Operation, storage::QueryResult};
 
