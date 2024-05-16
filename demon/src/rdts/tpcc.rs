@@ -9,24 +9,40 @@ use super::Operation;
 pub struct DB {
     /// w_id -> Warehouse
     warehouses: HashMap<u16, Warehouse>,
-    /// (d_w_id, d_id) -> District
-    districts: HashMap<(u16, u8), District>,
     /// i_id -> Item
     items: HashMap<usize, Item>,
-    /// (c_w_id, c_d_id, c_id) -> Customer
-    customers: HashMap<(u16, u8, usize), Customer>,
-    /// History
-    history: Vec<History>,
     /// (s_w_id, s_i_id) -> Stock
     stock: HashMap<(u16, usize), Stock>,
+    /// some tables are locally partitioned by warehouse
+    by_warehouse: HashMap<u16, ByWarehouse>,
+}
+
+impl DB {
+    fn wh(&self, w_id: &u16) -> &ByWarehouse {
+        self.by_warehouse.get(w_id).unwrap()
+    }
+
+    fn wh_mut(&mut self, w_id: &u16) -> &mut ByWarehouse {
+        self.by_warehouse.get_mut(w_id).unwrap()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ByWarehouse {
+    /// (d_w_id, d_id) -> District
+    districts: HashMap<u8, District>,
     /// (o_w_id, o_d_id, o_id) -> Order
-    orders: HashMap<(u16, u8, usize), Order>,
+    orders: HashMap<(u8, usize), Order>,
     /// (no_w_id, no_d_id, no_o_id) -> NewOrder
-    new_orders: HashMap<(u16, u8, usize), NewOrder>,
+    new_orders: HashMap<(u8, usize), NewOrder>,
     /// (no_w_id, no_d_id) -> no_o_id
-    new_order_index: HashMap<(u16, u8), VecDeque<usize>>,
+    new_order_index: HashMap<u8, VecDeque<usize>>,
     /// (ol_w_id,ol_d_id,ol_o_id,ol_number) -> OrderLine
-    order_lines: HashMap<(u16, u8, usize, usize), OrderLine>,
+    order_lines: HashMap<(u8, usize, usize), OrderLine>,
+    /// History
+    history: Vec<History>,
+    /// (c_w_id, c_d_id, c_id) -> Customer
+    customers: HashMap<(u8, usize), Customer>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -390,32 +406,33 @@ impl Operation for TpccOp {
     }
 
     fn is_conflicting(&self, other: &Self) -> bool {
-        return true
-        // match *self {
-        //     Self::LoadTuples {..} => true,
-        //     Self::Delivery {..} => true,
-        //     Self::NewOrder { w_id: no_w_id, d_id: no_d_id, c_id: no_c_id, .. } => {
-        //         match other {
-        //             Self::Payment { w_id, d_id, c_id, .. } => {
-        //                 no_w_id == *w_id && no_d_id == *d_id && (c_id.is_none() || c_id.unwrap() == no_c_id)
-        //             },
-        //             _ => true,
-        //         }
-        //     },
-        //     Self::OrderStatus {..} => true,
-        //     Self::Payment {..} => true,
-        //     Self::StockLevel {..} => true,
-        // }
+        match *self {
+            Self::LoadTuples {..} => true,
+            Self::Delivery {..} => true,
+            Self::NewOrder { w_id: no_w_id, .. } => {
+                match other {
+                    Self::Payment { w_id, .. } => {
+                        no_w_id == *w_id
+                    },
+                    Self::Delivery { w_id, .. } => {
+                        no_w_id == *w_id
+                    },
+                    _ => true,
+                }
+            },
+            Self::OrderStatus {..} => true,
+            Self::Payment {..} => true,
+            Self::StockLevel {..} => true,
+        }
     }
 
     fn rollback_conflicting_state(&self, source: &Self::State, target: &mut Self::State) {
-        // match self {
-        //     Self::NewOrder { w_id, d_id, c_id, o_entry_d, i_ids, i_w_ids, i_qtys } => {
-        //         todo!()
-        //     },
-        //     _ => *target = source.clone(),
-        // }
-        *target = source.clone()
+        match self {
+            Self::NewOrder { w_id, .. } => {
+                *target.wh_mut(w_id) = source.wh(w_id).clone();
+            },
+            _ => unimplemented!("NewOrder is the only strong op"),
+        }
     }
 
     fn parse(text: &str) -> anyhow::Result<Self> {
@@ -497,6 +514,7 @@ impl Operation for TpccOp {
                             let w_ytd: f64 = values.next().unwrap().parse().unwrap();
                             let val = Warehouse{w_id, w_name, w_street_1, w_street_2, w_city, w_state, w_zip, w_tax, w_ytd};
                             state.warehouses.insert(w_id, val);
+                            state.by_warehouse.insert(w_id, Default::default());
                         }
                     },
                     "DISTRICT" => {
@@ -514,7 +532,7 @@ impl Operation for TpccOp {
                             let d_ytd: f64 = values.next().unwrap().parse().unwrap();
                             let d_next_o_id: usize = values.next().unwrap().parse().unwrap();
                             let val = District{d_id, d_w_id, d_name, d_street_1, d_street_2, d_city, d_state, d_zip, d_tax, d_ytd, d_next_o_id};
-                            state.districts.insert((d_w_id, d_id), val);
+                            state.wh_mut(&d_w_id).districts.insert(d_id, val);
                         }
                     },
                     "ITEM" => {
@@ -554,7 +572,7 @@ impl Operation for TpccOp {
                             let c_delivery_cnt: usize = values.next().unwrap().parse().unwrap();
                             let c_data: String = values.next().unwrap().parse().unwrap();
                             let val = Customer{c_id, c_d_id, c_w_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, c_payment_cnt, c_delivery_cnt, c_data};
-                            state.customers.insert((c_w_id, c_d_id, c_id), val);
+                            state.wh_mut(&c_w_id).customers.insert((c_d_id, c_id), val);
                         }
                     },
                     "HISTORY" => {
@@ -569,7 +587,7 @@ impl Operation for TpccOp {
                             let h_amount: f64 = values.next().unwrap().parse().unwrap();
                             let h_data: String = values.next().unwrap().parse().unwrap();
                             let val = History{h_c_id, h_c_d_id, h_c_w_id, h_d_id, h_w_id, h_date, h_amount, h_data};
-                            state.history.push(val);
+                            state.wh_mut(&h_w_id).history.push(val);
                         }
                     },
                     "STOCK" => {
@@ -608,7 +626,7 @@ impl Operation for TpccOp {
                             let o_ol_cnt: usize = values.next().unwrap().parse().unwrap();
                             let o_all_local: usize = values.next().unwrap().parse().unwrap();
                             let val = Order{o_id, o_c_id, o_d_id, o_w_id, o_entry_d, o_carrier_id, o_ol_cnt, o_all_local};
-                            state.orders.insert((o_w_id, o_d_id, o_id), val);
+                            state.wh_mut(&o_w_id).orders.insert((o_d_id, o_id), val);
                         }
                     },
                     "NEW_ORDER" => {
@@ -618,14 +636,14 @@ impl Operation for TpccOp {
                             let no_d_id: u8 = values.next().unwrap().parse().unwrap();
                             let no_w_id: u16 = values.next().unwrap().parse().unwrap();
                             let val = NewOrder{no_o_id, no_d_id, no_w_id};
-                            state.new_orders.insert((no_w_id, no_d_id, no_o_id), val);
-                            if let Some(dq) = state.new_order_index.get_mut(&(no_w_id, no_d_id)) {
+                            state.wh_mut(&no_w_id).new_orders.insert((no_d_id, no_o_id), val);
+                            if let Some(dq) = state.wh_mut(&no_w_id).new_order_index.get_mut(&no_d_id) {
                                 dq.push_front(no_o_id);
                                 dq.make_contiguous().sort_unstable();
                             } else {
                                 let mut dq = VecDeque::new();
                                 dq.push_front(no_o_id);
-                                state.new_order_index.insert((no_w_id, no_d_id), dq);
+                                state.wh_mut(&no_w_id).new_order_index.insert(no_d_id, dq);
                             }
                         }
                     },
@@ -643,7 +661,7 @@ impl Operation for TpccOp {
                             let ol_amount: f64 = values.next().unwrap().parse().unwrap();
                             let ol_dist_info: String = values.next().unwrap().parse().unwrap();
                             let val = OrderLine{ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_delivery_d, ol_quantity, ol_amount, ol_dist_info};
-                            state.order_lines.insert((ol_w_id, ol_d_id, ol_o_id, ol_number), val);
+                            state.wh_mut(&ol_w_id).order_lines.insert((ol_d_id, ol_o_id, ol_number), val);
                         }
                     },
                     _ => unreachable!("bad table name: {:?}", table),
@@ -656,23 +674,24 @@ impl Operation for TpccOp {
                 ol_delivery_d,
             } => {
                 for d_id in 1..=10 {
-                    if let Some(o_ids) = state.new_order_index.get_mut(&(*w_id, d_id)) {
+                    if let Some(o_ids) = state.wh_mut(w_id).new_order_index.get_mut(&d_id) {
                         if o_ids.is_empty() {
                             continue
                         }
                         let o_id = o_ids.pop_front().unwrap();
-                        let _new_order = state.new_orders.remove(&(*w_id, d_id, o_id)).unwrap();
-                        let order = state.orders.get_mut(&(*w_id, d_id, o_id)).unwrap();
+                        let _new_order = state.wh_mut(w_id).new_orders.remove(&(d_id, o_id)).unwrap();
+                        let order = state.wh_mut(w_id).orders.get_mut(&(d_id, o_id)).unwrap();
                         order.o_carrier_id = *o_carrier_id;
-                        let ol_total = state.order_lines.iter_mut().filter(|(key, _ol)| {
-                            key.0 == *w_id && key.1 == d_id && key.2 == o_id
+                        let o_c_id = order.o_c_id;
+                        let ol_total = state.wh_mut(w_id).order_lines.iter_mut().filter(|(key, _ol)| {
+                            key.0 == d_id && key.1 == o_id
                         }).map(|(_, ol)| {
                             // update OL
                             ol.ol_delivery_d = ol_delivery_d.to_owned();
                             // and return amount
                             ol.ol_amount
                         }).sum::<f64>();
-                        let customer = state.customers.get_mut(&(*w_id, d_id, order.o_c_id)).unwrap();
+                        let customer = state.wh_mut(w_id).customers.get_mut(&(d_id, o_c_id)).unwrap();
                         customer.c_balance += ol_total;
                     }
                 }
@@ -692,7 +711,7 @@ impl Operation for TpccOp {
                 for i in 0..i_ids.len() {
                     all_local = all_local && i_w_ids[i] == *w_id;
                     if let Some(item) = state.items.get(&i_ids[i]) {
-                        items.push(item);
+                        items.push(item.clone());
                     } else {
                         // abort on non-existent item id
                         // happens on purpose with 1% of transactions
@@ -700,11 +719,11 @@ impl Operation for TpccOp {
                     }
                 }
                 let w_tax = state.warehouses.get(w_id).unwrap().w_tax;
-                let district = state.districts.get_mut(&(*w_id, *d_id)).unwrap();
+                let district = state.wh_mut(w_id).districts.get_mut(d_id).unwrap();
                 let d_tax = district.d_tax;
                 let d_next_o_id = district.d_next_o_id;
                 district.d_next_o_id += 1;
-                let customer = state.customers.get(&(*w_id, *d_id, *c_id)).unwrap();
+                let customer = state.wh_mut(w_id).customers.get(&(*d_id, *c_id)).unwrap();
                 let c_discount = customer.c_discount;
 
                 let o_ol_cnt = i_ids.len();
@@ -720,12 +739,12 @@ impl Operation for TpccOp {
                     o_ol_cnt,
                     o_all_local: all_local as usize,
                 };
-                state.orders.insert((*w_id, *d_id, d_next_o_id), order);
-                state.new_orders.insert(
-                    (*w_id, *d_id, d_next_o_id),
+                state.wh_mut(w_id).orders.insert((*d_id, d_next_o_id), order);
+                state.wh_mut(w_id).new_orders.insert(
+                    (*d_id, d_next_o_id),
                     NewOrder { no_o_id: d_next_o_id, no_d_id: *d_id, no_w_id: *w_id }
                 );
-                state.new_order_index.get_mut(&(*w_id, *d_id)).unwrap().push_back(d_next_o_id);
+                state.wh_mut(w_id).new_order_index.get_mut(&(*d_id)).unwrap().push_back(d_next_o_id);
 
                 let mut total = 0.0;
                 for i in 0..i_ids.len() {
@@ -733,7 +752,7 @@ impl Operation for TpccOp {
                     let ol_supply_w_id = i_w_ids[i];
                     let ol_i_id = i_ids[i];
                     let ol_quantity = i_qtys[i];
-                    let i_info = items[i];
+                    let i_info = &items[i];
 
                     let stock_info = if let Some(s) = state.stock.get_mut(&(ol_supply_w_id, ol_i_id)) {
                         s
@@ -775,12 +794,13 @@ impl Operation for TpccOp {
                     let ol_amount = ol_quantity as f64 * i_info.i_price;
                     total += ol_amount;
 
-                    state.order_lines.insert(
-                        (*w_id, *d_id, d_next_o_id, ol_number),
+                    state.wh_mut(w_id).order_lines.insert(
+                        (*d_id, d_next_o_id, ol_number),
                         OrderLine { ol_o_id: d_next_o_id, ol_d_id: *d_id, ol_w_id: *w_id, ol_number, ol_i_id, ol_supply_w_id, ol_delivery_d: o_entry_d.to_owned(), ol_quantity, ol_amount, ol_dist_info: s_dist_xx },
                     );
                 }
                 // TODO: return item_data and total
+                total *= (1.0 - c_discount) * (1.0 + w_tax + d_tax);
                 None
             },
             Self::OrderStatus{
@@ -790,19 +810,19 @@ impl Operation for TpccOp {
                 c_last,
             } => {
                 let customer = if let Some(c_id) = c_id {
-                    state.customers.get(&(*w_id, *d_id, *c_id)).unwrap()
+                    state.wh(w_id).customers.get(&(*d_id, *c_id)).unwrap()
                 } else {
-                    let count = state.customers.values().filter(|c| c.c_last == *c_last).count();
-                    state.customers.values().filter(|c| {
+                    let count = state.wh(w_id).customers.values().filter(|c| c.c_last == *c_last).count();
+                    state.wh(w_id).customers.values().filter(|c| {
                         c.c_last == *c_last
                     }).skip((count / 2).min(count-1)).next().unwrap()
                 };
-                let order = state.orders.values()
-                    .filter(|o| o.o_w_id == *w_id && o.o_d_id == *d_id && o.o_c_id == customer.c_id)
+                let order = state.wh(w_id).orders.values()
+                    .filter(|o| o.o_d_id == *d_id && o.o_c_id == customer.c_id)
                     .max_by_key(|o| o.o_id);
                 let order_lines = if let Some(order) = order {
-                    state.order_lines.values()
-                        .filter(|ol| ol.ol_w_id == *w_id && ol.ol_d_id == *d_id && ol.ol_o_id == order.o_id)
+                    state.wh(w_id).order_lines.values()
+                        .filter(|ol| ol.ol_d_id == *d_id && ol.ol_o_id == order.o_id)
                         .collect()
                 } else {
                     vec![]
@@ -821,10 +841,10 @@ impl Operation for TpccOp {
                 h_date,
             } => {
                 let customer = if let Some(c_id) = c_id {
-                    state.customers.get_mut(&(*w_id, *d_id, *c_id)).unwrap()
+                    state.wh_mut(w_id).customers.get_mut(&(*d_id, *c_id)).unwrap()
                 } else {
-                    let count = state.customers.values().filter(|c| c.c_last == *c_last).count();
-                    state.customers.values_mut().filter(|c| {
+                    let count = state.wh(w_id).customers.values().filter(|c| c.c_last == *c_last).count();
+                    state.wh_mut(w_id).customers.values_mut().filter(|c| {
                         c.c_last == *c_last
                     }).skip((count / 2).min(count-1)).next().unwrap()
                 };
@@ -838,21 +858,26 @@ impl Operation for TpccOp {
                         customer.c_data = customer.c_data[0..500].to_owned();
                     }
                 }
+                let h_c_id = customer.c_id;
+                let h_c_w_id = customer.c_w_id;
+                let h_c_d_id = customer.c_d_id;
 
                 let warehouse = state.warehouses.get_mut(w_id).unwrap();
                 warehouse.w_ytd += *h_amount;
-                let district = state.districts.get_mut(&(*w_id, *d_id)).unwrap();
+                let w_name = warehouse.w_name.clone();
+                let district = state.wh_mut(w_id).districts.get_mut(d_id).unwrap();
                 district.d_ytd += *h_amount;
+                let d_name = district.d_name.clone();
 
-                state.history.push(History {
-                    h_c_id: customer.c_id,
-                    h_c_w_id: customer.c_w_id,
-                    h_c_d_id: customer.c_d_id,
+                state.wh_mut(w_id).history.push(History {
+                    h_c_id,
+                    h_c_w_id,
+                    h_c_d_id,
                     h_w_id: *w_id,
                     h_d_id: *d_id,
                     h_amount: *h_amount,
                     h_date: h_date.to_owned(),
-                    h_data: format!("{}    {}", warehouse.w_name, district.d_name),
+                    h_data: format!("{}    {}", w_name, d_name),
                 });
 
                 None
@@ -862,10 +887,10 @@ impl Operation for TpccOp {
                 d_id,
                 threshold,
             } => {
-                let district = state.districts.get(&(*w_id, *d_id)).unwrap();
+                let district = state.wh(w_id).districts.get(d_id).unwrap();
                 let o_id = district.d_next_o_id;
-                let item_ids = state.order_lines.values().filter_map(|ol| {
-                    if ol.ol_w_id == *w_id && ol.ol_d_id == *d_id && ol.ol_o_id < o_id && ol.ol_o_id >= o_id - 20 {
+                let item_ids = state.wh(w_id).order_lines.values().filter_map(|ol| {
+                    if ol.ol_d_id == *d_id && ol.ol_o_id < o_id && ol.ol_o_id >= o_id - 20 {
                         Some(ol.ol_i_id)
                     } else {
                         None
