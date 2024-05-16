@@ -47,6 +47,10 @@ bench_config = {
 
 
 def run_benches_from_file(path):
+    """
+    Reads a json file that specifies the cluster and benchmark configurations.
+    Then executes every benchmark configuration.
+    """
     global nodes
     data = json.load(path)
     nodes = data["nodes"]
@@ -55,6 +59,9 @@ def run_benches_from_file(path):
             run_bench(bench_config)
 
 def expand_multi_bench_config(multi_config):
+    """
+    Generates individual benchmark configurations from the more compact json file format.
+    """
     for proto in multi_confg["cluster_config"]["proto"]:
         for datatype in multi_confg["cluster_config"]["datatype"]:
             cluster_config = {
@@ -74,6 +81,9 @@ def expand_multi_bench_config(multi_config):
                 print("missing impl for tpcc in bench harness")
 
 def expand_micro_bench_settings(settings):
+    """
+    Generates settings objects from settings ranges for the micro bench.
+    """
     for strong_ratio in settings["strong_ratio"]:
         for read_ratio in settings["read_ratio"]:
             for num_clients in settings["num_clients"]:
@@ -166,3 +176,10 @@ def start_servers(cluster_config):
             time.sleep(attempts)
     # just to make sure everything had more than enough time to be fully running
     time.sleep(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 1:
+        print("one argument required to specify input file")
+        exit()
+    path = sys.argv[0]
+    run_benches_from_file(path)
