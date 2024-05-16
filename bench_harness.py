@@ -104,6 +104,7 @@ def run_bench(bench_config, nodes):
     TODO: collect results
     TODO: tpcc
     """
+    print(f"running: {bench_config}")
     reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
     if "micro" == bench_config["type"]:
         entry_node = nodes[bench_config["cluster_config"]["node_ids"][0]]
@@ -127,7 +128,7 @@ def ensure_cluster_state(cluster_config, nodes):
     if old is None \
         or old["proto"] != new["proto"] \
         or old["datatype"] != new["datatype"] \
-        or set(old["node_ids"]) == set(new["node_ids"]):
+        or set(old["node_ids"]) != set(new["node_ids"]):
         if old is None:
             stop_servers(new, nodes)
         else:

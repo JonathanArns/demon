@@ -34,7 +34,7 @@
 				"read_ratio": [0.1],
 				"num_clients": [100],
 				"key_range": [10],
-				"duration": [10]
+				"duration": [5]
 			}
 		}
 	]
