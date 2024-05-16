@@ -6,44 +6,44 @@ import time
 import copy
 import json
 
-nodes = {
-    "bob": {
-        "ip": "localhost",
-        "control_port": 5000,
-        "db_port": 8080,
-        "internal_addr": "bob:1234"
-    },
-    "alice": {
-        "ip": "localhost",
-        "control_port": 5001,
-        "db_port": 8081,
-        "internal_addr": "alice:1234"
-    },
-    "fabi": {
-        "ip": "localhost",
-        "control_port": 5002,
-        "db_port": 8082,
-        "internal_addr": "fabi:1234"
-    },
-}
+# nodes = {
+#     "bob": {
+#         "ip": "localhost",
+#         "control_port": 5000,
+#         "db_port": 8080,
+#         "internal_addr": "bob:1234"
+#     },
+#     "alice": {
+#         "ip": "localhost",
+#         "control_port": 5001,
+#         "db_port": 8081,
+#         "internal_addr": "alice:1234"
+#     },
+#     "fabi": {
+#         "ip": "localhost",
+#         "control_port": 5002,
+#         "db_port": 8082,
+#         "internal_addr": "fabi:1234"
+#     },
+# }
 
-cluster_config = {
-    "proto": "demon",
-    "datatype": "counter",
-    "nodes_ids": ["bob", "alice", "fabi"]
-}
+# cluster_config = {
+#     "proto": "demon",
+#     "datatype": "counter",
+#     "nodes_ids": ["bob", "alice", "fabi"]
+# }
 
-bench_config = {
-    "cluster_config": cluster_config,
-    "type": "micro", # tpcc, micro
-    "settings": {
-        "strong_ratio": 0.2,
-        "read_ratio": 0.0,
-        "num_clients": 100,
-        "key_range": 10,
-        "duration": 10,
-    }
-}
+# bench_config = {
+#     "cluster_config": cluster_config,
+#     "type": "micro", # tpcc, micro
+#     "settings": {
+#         "strong_ratio": 0.2,
+#         "read_ratio": 0.0,
+#         "num_clients": 100,
+#         "key_range": 10,
+#         "duration": 10,
+#     }
+# }
 
 
 def run_benches_from_file(path):
@@ -51,23 +51,23 @@ def run_benches_from_file(path):
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
     """
-    global nodes
-    data = json.load(path)
+    with open(path, 'r') as file:
+        data = json.load(file)
     nodes = data["nodes"]
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
-            run_bench(bench_config)
+            run_bench(bench_config, nodes)
 
 def expand_multi_bench_config(multi_config):
     """
     Generates individual benchmark configurations from the more compact json file format.
     """
-    for proto in multi_confg["cluster_config"]["proto"]:
-        for datatype in multi_confg["cluster_config"]["datatype"]:
+    for proto in multi_config["cluster_config"]["proto"]:
+        for datatype in multi_config["cluster_config"]["datatype"]:
             cluster_config = {
                 "proto": proto,
                 "datatype": datatype,
-                "node_ids": multi_confg["cluster_config"]["node_ids"]
+                "node_ids": multi_config["cluster_config"]["node_ids"]
             }
             
             if "micro" == multi_config["type"]:
@@ -90,22 +90,24 @@ def expand_micro_bench_settings(settings):
                 for key_range in settings["key_range"]:
                     for duration in settings["duration"]:
                         yield {
-                            "strong_ratio": strong_ratio
+                            "strong_ratio": strong_ratio,
                             "read_ratio": read_ratio,
                             "num_clients": num_clients,
                             "key_range": key_range,
                             "duration": duration,
                         }
 
-def run_bench(bench_config):
+def run_bench(bench_config, nodes):
     """
     Runs a benchmark according to the specified config.
 
     TODO: collect results
     TODO: tpcc
     """
-    reconfigured = ensure_cluster_state(bench_config["cluster_config"])
+    reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
     if "micro" == bench_config["type"]:
+        entry_node = nodes[bench_config["cluster_config"]["node_ids"][0]]
+        addr = f"{entry_node['ip']}:{entry_node['db_port']}"
         resp = requests.post(f"http://{addr}/bench", json=bench_config["settings"])
         print(resp.json())
     elif "tpcc" == bench_config["type"]:
@@ -114,7 +116,7 @@ def run_bench(bench_config):
         print("Bad benchmark type. choose one of: micro, tpcc")
 
 current_cluster_config = None
-def ensure_cluster_state(cluster_config):
+def ensure_cluster_state(cluster_config, nodes):
     """
     Makes sure the cluster is configured according to the arguments.
     Returns `True` if the cluster was reconfigured in the process.
@@ -126,35 +128,36 @@ def ensure_cluster_state(cluster_config):
         or old["proto"] != new["proto"] \
         or old["datatype"] != new["datatype"] \
         or set(old["node_ids"]) == set(new["node_ids"]):
-        stop_servers(old)
-        start_servers(new)
+        if old is None:
+            stop_servers(new, nodes)
+        else:
+            stop_servers(old, nodes)
+        start_servers(new, nodes)
         current_cluster_config = copy.deepcopy(new)
         return True
     else:
         return False
 
-def stop_servers(cluster_config):
+def stop_servers(cluster_config, nodes):
     """
     Blocks until all servers that are part of the cluster config are stopped.
     """
-    global nodes
     for node_id in cluster_config["node_ids"]:
         node = nodes[node_id]
         requests.post(f"http://{node['ip']}:{node['control_port']}/stop")
 
-def start_servers(cluster_config):
+def start_servers(cluster_config, nodes):
     """
     Starts a cluster with the given config.
     Only returns once all replicas pass the health check.
     """
-    global nodes
     root_node = None
     for node_id in cluster_config["node_ids"]:
         node = nodes[node_id]
         config = {
             "proto": cluster_config["proto"],
             "datatype": cluster_config["datatype"],
-            "cluster_size": len(cluster_config["nodes"])
+            "cluster_size": len(cluster_config["node_ids"])
         }
         if root_node is None:
             root_node = node
@@ -168,7 +171,8 @@ def start_servers(cluster_config):
     attempts = 0
     while attempts < 5:
         try:
-            for node in cluster_config["nodes"]:
+            for node_id in cluster_config["node_ids"]:
+                node = nodes[node_id]
                 requests.post(f"http://{node['ip']}:{node['db_port']}/")
             break
         except:
@@ -178,8 +182,8 @@ def start_servers(cluster_config):
     time.sleep(1)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 1:
+    if len(sys.argv) != 2:
         print("one argument required to specify input file")
         exit()
-    path = sys.argv[0]
+    path = sys.argv[1]
     run_benches_from_file(path)
