@@ -1,0 +1,3 @@
+[submodule "py-tpcc"]
+	path = py-tpcc
+	url = git@github.com:JonathanArns/py-tpcc.git
