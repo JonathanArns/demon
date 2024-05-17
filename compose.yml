@@ -5,8 +5,8 @@ services:
     hostname: bob
     build: 
       context: .
-      dockerfile: bench.Dockerfile
-    command: --cluster-size 3 --proto demon -t tpcc
+      dockerfile: Dockerfile
+    # command: --cluster-size 3 --proto demon -t tpcc
     cap_add:
       - NET_ADMIN
     ports:
@@ -18,8 +18,8 @@ services:
     hostname: alice
     build: 
       context: .
-      dockerfile: bench.Dockerfile
-    command: --cluster-size 3 --proto demon -t tpcc --addr bob:1234
+      dockerfile: Dockerfile
+    # command: --cluster-size 3 --proto demon -t tpcc --addr bob:1234
     cap_add:
       - NET_ADMIN
     ports:
@@ -35,8 +35,8 @@ services:
     hostname: fabi
     build: 
       context: .
-      dockerfile: bench.Dockerfile
-    command: --cluster-size 3 --proto demon -t tpcc --addr bob:1234
+      dockerfile: Dockerfile
+    # command: --cluster-size 3 --proto demon -t tpcc --addr bob:1234
     cap_add:
       - NET_ADMIN
     ports:

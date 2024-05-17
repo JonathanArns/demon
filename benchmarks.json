@@ -23,6 +23,24 @@
 
 	"multi_bench_configs": [
 		{
+			"type": "tpcc",
+			"cluster_config": {
+				"proto": ["demon", "redblue-mod"],
+				"datatype": ["tpcc"],
+				"node_ids": ["bob", "alice", "fabi"]
+			},
+			"client_nodes": [
+				"bilbo:insecure_password@localhost:2200",
+				"bilbo:insecure_password@localhost:2201"
+			],
+			"settings": {
+				"warehouses": [4],
+				"scalefactor": [500],
+				"num_clients": [1],
+				"duration": [30]
+			}
+		},
+		{
 			"type": "micro",
 			"cluster_config": {
 				"proto": ["demon", "redblue-mod"],

@@ -1,5 +1,6 @@
 #!/bin/python
 
+import subprocess
 import requests
 import sys
 import time
@@ -78,7 +79,13 @@ def expand_multi_bench_config(multi_config):
                         "settings": settings,
                     }
             elif "tpcc" == multi_config["type"]:
-                print("missing impl for tpcc in bench harness")
+                for settings in expand_tpcc_bench_settings(multi_config["settings"]):
+                    yield {
+                        "cluster_config": cluster_config,
+                        "client_nodes": multi_config["client_nodes"],
+                        "type": multi_config["type"],
+                        "settings": settings,
+                    }
 
 def expand_micro_bench_settings(settings):
     """
@@ -97,6 +104,23 @@ def expand_micro_bench_settings(settings):
                             "duration": duration,
                         }
 
+def expand_tpcc_bench_settings(settings):
+    """
+    Generates settings objects from settings ranges for tpcc.
+    """
+    for num_clients in settings["num_clients"]:
+        for scalefactor in settings["scalefactor"]:
+            for warehouses in settings["warehouses"]:
+                for duration in settings["duration"]:
+                    yield {
+                        "num_clients": num_clients,
+                        "scalefactor": scalefactor,
+                        "warehouses": warehouses,
+                        "duration": duration,
+                    }
+
+
+previous_tpcc_settings = None
 def run_bench(bench_config, nodes):
     """
     Runs a benchmark according to the specified config.
@@ -104,6 +128,7 @@ def run_bench(bench_config, nodes):
     TODO: collect results
     TODO: tpcc
     """
+    global previous_tpcc_settings
     print(f"running: {bench_config}")
     reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
     if "micro" == bench_config["type"]:
@@ -112,7 +137,33 @@ def run_bench(bench_config, nodes):
         resp = requests.post(f"http://{addr}/bench", json=bench_config["settings"])
         print(resp.json())
     elif "tpcc" == bench_config["type"]:
-        print("tpcc bench not implemented in harness yet")
+        settings = bench_config["settings"]
+        scalefactor = str(settings["scalefactor"])
+        num_clients = str(settings["num_clients"])
+        warehouses = str(settings["warehouses"])
+        duration = str(settings["duration"])
+        command = ["python2", "py-tpcc/pytpcc/coordinator.py", "demon",
+                   "--config", "./tpcc_driver.conf",
+                   "--scalefactor", scalefactor,
+                   "--clientprocs", num_clients,
+                   "--warehouses", warehouses,
+                   "--duration", duration]
+        if not reconfigured:
+            if previous_tpcc_settings is not None \
+                and previous_tpcc_settings["scalefactor"] == scalefactor \
+                and previous_tpcc_settings["warehouses"] == warehouses:
+                # we can re-use the data from the previous tpcc run
+                command.append("--no-load")
+            else:
+                # need to re-start the servers to have a clean db
+                stop_servers(bench_config["cluster_config"], nodes)
+                start_servers(bench_config["cluster_config"], nodes)
+        entry_node = nodes[bench_config["cluster_config"]["node_ids"][0]]
+        with open("./tpcc_driver.conf", 'w') as file:
+            file.write(f"host {entry_node['ip']}\nport {entry_node['db_port']}\nclients: {' '.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
+        result = subprocess.run(command, capture_output=True, text=True)
+        # TODO: collect results
+        print(f"res: {result.stdout}\nerr: {result.stderr}")
     else:
         print("Bad benchmark type. choose one of: micro, tpcc")
 
