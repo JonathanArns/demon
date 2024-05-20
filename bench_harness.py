@@ -1,11 +1,12 @@
 #!/bin/python
 
-import subprocess
-import requests
 import sys
 import time
 import copy
 import json
+import requests
+import subprocess
+from multiprocessing import Pool
 
 # nodes = {
 #     "bob": {
@@ -119,6 +120,11 @@ def expand_tpcc_bench_settings(settings):
                         "duration": duration,
                     }
 
+def run_micro(args):
+    """
+    This is a helper function to run the microbench with multiprocessing.
+    """
+    return requests.post(f"http://{args[0]}/bench", json=args[1]).json()
 
 previous_tpcc_settings = None
 def run_bench(bench_config, nodes):
@@ -132,10 +138,21 @@ def run_bench(bench_config, nodes):
     print(f"running: {bench_config}")
     reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
     if "micro" == bench_config["type"]:
-        entry_node = nodes[bench_config["cluster_config"]["node_ids"][0]]
-        addr = f"{entry_node['ip']}:{entry_node['db_port']}"
-        resp = requests.post(f"http://{addr}/bench", json=bench_config["settings"])
-        print(resp.json())
+        args = [(f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"]) for id in bench_config["cluster_config"]["node_ids"]]
+        with Pool(processes=len(args)) as pool:
+            results = pool.map(run_micro, args)
+
+        # combine results from different nodes
+        totals = {
+            "mean_latency": 0.0,
+            "throughput": 0,
+        }
+        for values in results:
+            totals["throughput"] += values["throughput"]
+            totals["mean_latency"] += values["mean_latency"]
+        totals["mean_latency"] /= len(results)
+        print(totals)
+
     elif "tpcc" == bench_config["type"]:
         settings = bench_config["settings"]
         scalefactor = str(settings["scalefactor"])
@@ -158,7 +175,6 @@ def run_bench(bench_config, nodes):
                 # need to re-start the servers to have a clean db
                 stop_servers(bench_config["cluster_config"], nodes)
                 start_servers(bench_config["cluster_config"], nodes)
-        entry_node = nodes[bench_config["cluster_config"]["node_ids"][0]]
         with open("./tpcc_driver.conf", 'w') as file:
             # we assume that the clients are co-located with a db node that they can reach at localhost:80
             file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
