@@ -30,8 +30,9 @@
 				"node_ids": ["bob", "alice", "fabi"]
 			},
 			"client_nodes": [
-				"bilbo:insecure_password@localhost:2200",
-				"bilbo:insecure_password@localhost:2201"
+				"-p 2200 bilbo@localhost",
+				"-p 2201 bilbo@localhost",
+				"-p 2202 bilbo@localhost"
 			],
 			"settings": {
 				"warehouses": [4],

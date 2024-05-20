@@ -374,7 +374,7 @@ impl Operation for TpccOp {
 
     fn is_semiserializable_strong(&self) -> bool {
         match *self {
-            Self::LoadTuples {..} => true,
+            Self::LoadTuples {..} => false,
             Self::Delivery {..} => false,
             Self::NewOrder {..} => true,
             Self::OrderStatus {..} => false,

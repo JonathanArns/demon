@@ -6,12 +6,14 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile
+    #   dockerfile: test.Dockerfile
     # command: --cluster-size 3 --proto demon -t tpcc
     cap_add:
       - NET_ADMIN
     ports:
       - 8080:80
       - 5000:5000
+      - 2200:22
 
   alice:
     container_name: alice
@@ -19,12 +21,14 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile
+    #   dockerfile: test.Dockerfile
     # command: --cluster-size 3 --proto demon -t tpcc --addr bob:1234
     cap_add:
       - NET_ADMIN
     ports:
       - 8081:80
       - 5001:5000
+      - 2201:22
     environment:
       RUST_BACKTRACE: 1
     depends_on:
@@ -36,11 +40,30 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile
+    #   dockerfile: test.Dockerfile
     # command: --cluster-size 3 --proto demon -t tpcc --addr bob:1234
     cap_add:
       - NET_ADMIN
     ports:
       - 8082:80
       - 5002:5000
+      - 2202:22
     depends_on:
       - bob
+
+  # bilbo1:
+  #   container_name: bilbo1
+  #   build:
+  #     context: .
+  #     dockerfile: tpcc_client.Dockerfile
+  #   # command: tail -f /dev/null
+  #   ports:
+  #     - 2200:22
+
+  # bilbo2:
+  #   container_name: bilbo2
+  #   build:
+  #     context: .
+  #     dockerfile: tpcc_client.Dockerfile
+  #   ports:
+  #     - 2201:22

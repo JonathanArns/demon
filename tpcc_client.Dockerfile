@@ -1,4 +1,4 @@
-FROM python:2.7.18-slim-buster
+FROM python:3.11-slim-bookworm 
 
 # setup ssh server
 RUN apt-get update && apt-get install -y openssh-server
@@ -7,10 +7,9 @@ RUN useradd -m -s /bin/bash bilbo
 RUN echo "bilbo:insecure_password" | chpasswd
 EXPOSE 22
 
-RUN pip install execnet
+RUN pip install execnet requests
 
-WORKDIR /workdir/
-COPY ./py-tpcc ./
+WORKDIR /workspace/
+COPY ./py-tpcc /workspace/py-tpcc
 
-ENTRYPOINT service ssh start && bash
-CMD tail -f /dev/null
+ENTRYPOINT /bin/sh -c "service ssh start && tail -f /dev/null"

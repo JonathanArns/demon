@@ -142,7 +142,7 @@ def run_bench(bench_config, nodes):
         num_clients = str(settings["num_clients"])
         warehouses = str(settings["warehouses"])
         duration = str(settings["duration"])
-        command = ["python2", "py-tpcc/pytpcc/coordinator.py", "demon",
+        command = ["python", "py-tpcc/pytpcc/coordinator.py", "demon",
                    "--config", "./tpcc_driver.conf",
                    "--scalefactor", scalefactor,
                    "--clientprocs", num_clients,
@@ -160,7 +160,8 @@ def run_bench(bench_config, nodes):
                 start_servers(bench_config["cluster_config"], nodes)
         entry_node = nodes[bench_config["cluster_config"]["node_ids"][0]]
         with open("./tpcc_driver.conf", 'w') as file:
-            file.write(f"host {entry_node['ip']}\nport {entry_node['db_port']}\nclients: {' '.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
+            # we assume that the clients are co-located with a db node that they can reach at localhost:80
+            file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
         result = subprocess.run(command, capture_output=True, text=True)
         # TODO: collect results
         print(f"res: {result.stdout}\nerr: {result.stderr}")
