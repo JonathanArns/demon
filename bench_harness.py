@@ -108,9 +108,9 @@ def expand_tpcc_bench_settings(settings):
     """
     Generates settings objects from settings ranges for tpcc.
     """
-    for num_clients in settings["num_clients"]:
-        for scalefactor in settings["scalefactor"]:
-            for warehouses in settings["warehouses"]:
+    for scalefactor in settings["scalefactor"]:
+        for warehouses in settings["warehouses"]:
+            for num_clients in settings["num_clients"]:
                 for duration in settings["duration"]:
                     yield {
                         "num_clients": num_clients,
