@@ -6,46 +6,8 @@ import copy
 import json
 import requests
 import subprocess
+import pandas as pd
 from multiprocessing import Pool
-
-# nodes = {
-#     "bob": {
-#         "ip": "localhost",
-#         "control_port": 5000,
-#         "db_port": 8080,
-#         "internal_addr": "bob:1234"
-#     },
-#     "alice": {
-#         "ip": "localhost",
-#         "control_port": 5001,
-#         "db_port": 8081,
-#         "internal_addr": "alice:1234"
-#     },
-#     "fabi": {
-#         "ip": "localhost",
-#         "control_port": 5002,
-#         "db_port": 8082,
-#         "internal_addr": "fabi:1234"
-#     },
-# }
-
-# cluster_config = {
-#     "proto": "demon",
-#     "datatype": "counter",
-#     "nodes_ids": ["bob", "alice", "fabi"]
-# }
-
-# bench_config = {
-#     "cluster_config": cluster_config,
-#     "type": "micro", # tpcc, micro
-#     "settings": {
-#         "strong_ratio": 0.2,
-#         "read_ratio": 0.0,
-#         "num_clients": 100,
-#         "key_range": 10,
-#         "duration": 10,
-#     }
-# }
 
 
 def run_benches_from_file(path):
@@ -56,9 +18,20 @@ def run_benches_from_file(path):
     with open(path, 'r') as file:
         data = json.load(file)
     nodes = data["nodes"]
+    
+    results = []
+
+    # local only
+    # set_latency(10, nodes)
+
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
-            run_bench(bench_config, nodes)
+            output = run_bench(bench_config, nodes)
+            if output is not None:
+                results.append(output)
+    
+    df = pd.DataFrame(results)
+    df.to_csv("experiment_output.csv", index=False)
 
 def expand_multi_bench_config(multi_config):
     """
@@ -124,34 +97,50 @@ def run_micro(args):
     """
     This is a helper function to run the microbench with multiprocessing.
     """
-    return requests.post(f"http://{args[0]}/bench", json=args[1]).json()
+    measurements = requests.post(f"http://{args[1]}/bench", json=args[2]).json()
+    measurements["node_id"] = args[0]
+    return measurements
 
 previous_tpcc_settings = None
 def run_bench(bench_config, nodes):
     """
     Runs a benchmark according to the specified config.
 
-    TODO: collect results
-    TODO: tpcc
+    Returns a flat dict containing measurements and parameters, to be inserted as a row into a DataFrame.
     """
     global previous_tpcc_settings
     print(f"running: {bench_config}")
     reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
+    time.sleep(1)
     if "micro" == bench_config["type"]:
-        args = [(f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"]) for id in bench_config["cluster_config"]["node_ids"]]
+        args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"]) for id in bench_config["cluster_config"]["node_ids"]]
         with Pool(processes=len(args)) as pool:
             results = pool.map(run_micro, args)
 
-        # combine results from different nodes
-        totals = {
-            "mean_latency": 0.0,
-            "throughput": 0,
+        # record benchmark measurements
+        data = {
+            "total_mean_latency": 0.0,
+            "total_throughput": 0,
         }
         for values in results:
-            totals["throughput"] += values["throughput"]
-            totals["mean_latency"] += values["mean_latency"]
-        totals["mean_latency"] /= len(results)
-        print(totals)
+            data["total_throughput"] += values["throughput"]
+            data["total_mean_latency"] += values["mean_latency"]
+            data[f"{values['node_id']}_throughput"] = values["throughput"]
+            data[f"{values['node_id']}_mean_latency"] = values["mean_latency"]
+        data["total_mean_latency"] /= len(results)
+
+        # record benchmark parameters
+        data["datatype"] = bench_config["cluster_config"]["datatype"]
+        data["proto"] = bench_config["cluster_config"]["proto"]
+        data["cluster_size"] = len(args)
+        data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
+        data["read_ratio"] = bench_config["settings"]["read_ratio"]
+        data["read_ratio"] = bench_config["settings"]["read_ratio"]
+        data["duration"] = bench_config["settings"]["duration"]
+        data["num_clients"] = bench_config["settings"]["num_clients"]
+        data["key_range"] = bench_config["settings"]["key_range"]
+
+        return data
 
     elif "tpcc" == bench_config["type"]:
         settings = bench_config["settings"]
@@ -179,10 +168,14 @@ def run_bench(bench_config, nodes):
             # we assume that the clients are co-located with a db node that they can reach at localhost:80
             file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
         result = subprocess.run(command, capture_output=True, text=True)
+
         # TODO: collect results
         print(f"res: {result.stdout}\nerr: {result.stderr}")
+        return None
+
     else:
         print("Bad benchmark type. choose one of: micro, tpcc")
+        return None
 
 current_cluster_config = None
 def ensure_cluster_state(cluster_config, nodes):
@@ -248,6 +241,13 @@ def start_servers(cluster_config, nodes):
             attempts += 1
             time.sleep(attempts)
     # just to make sure everything had more than enough time to be fully running
+    time.sleep(1)
+
+def set_latency(ms, nodes):
+    for node in nodes.values():
+        body = { "cmd": f"tc qdisc add dev eth0 root netem delay {ms}ms" }
+        requests.post(f"http://{node['ip']}:{node['control_port']}/stop")
+        requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json=body)
     time.sleep(1)
 
 if __name__ == "__main__":
