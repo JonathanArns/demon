@@ -194,7 +194,9 @@ where
 {
     /// The codec we use for framing all messages.
     fn codec() -> LengthDelimitedCodec {
-        LengthDelimitedCodec::new()
+        LengthDelimitedCodec::builder()
+            .max_frame_length(256 * 1024 * 1024)
+            .new_codec()
     }
 
     async fn new(id: NodeId) -> Self {
