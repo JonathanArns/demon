@@ -31,15 +31,19 @@ impl<O: Operation> Storage<O> {
 
     /// Stores and executes a red transaction, returning possible read values.
     pub async fn exec_red(&self, t: Transaction<O>) -> QueryResult<O> {
-        // wait until all causally required weak ops are here
-        loop {
-            if !t.snapshot.greater(&*self.current_snapshot.read().await) {
-                break
+        if let Some(op) = t.op {
+            // wait until all causally required weak ops are here
+            loop {
+                if !t.snapshot.greater(&*self.current_snapshot.read().await) {
+                    break
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            let output = op.apply(&mut *self.state.write().await);
+            QueryResult{ value: output }
+        } else {
+            QueryResult{ value: None }
         }
-        let output = t.op.apply(&mut *self.state.write().await);
-        QueryResult{ value: output }
     }
 
     pub async fn get_current_snapshot(&self) -> Snapshot {

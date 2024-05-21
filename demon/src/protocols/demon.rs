@@ -1,7 +1,7 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{demon::Storage, QueryResult, Transaction}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{TransactionId, Component, Message};
 
@@ -96,7 +96,7 @@ impl<O: Operation> DeMon<O> {
                     // strong operation
                     let id = demon.generate_transaction_id().await;
                     let snapshot = demon.choose_transaction_snapshot().await;
-                    let transaction = Transaction { id, snapshot, op: query };
+                    let transaction = Transaction { id, snapshot, op: Some(query) };
                     demon.waiting_transactions.lock().await.insert(id, result_sender);
                     demon.sequencer.append(transaction).await;
                 } else {
@@ -139,6 +139,17 @@ impl<O: Operation> DeMon<O> {
                         demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
                     },
                 }
+            }
+        });
+        let demon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                // generate no-op strong operations periodically
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let id = demon.generate_transaction_id().await;
+                let snapshot = demon.choose_transaction_snapshot().await;
+                let transaction = Transaction { id, snapshot, op: None };
+                demon.sequencer.append(transaction).await;
             }
         });
     }

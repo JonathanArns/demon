@@ -42,7 +42,7 @@ async fn main() {
 
     let api = Box::new(HttpApi{});
     match &args.datatype[..] {
-        "non_neg_counter" => {
+        "non-neg-counter" => {
             match &args.protocol[..] {
                 "demon" => {
                     protocols::demon::DeMon::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
@@ -58,9 +58,6 @@ async fn main() {
                 },
                 "redblue-mod" => {
                     protocols::redblue_modified::RedBlueModified::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
-                },
-                "unistore" => {
-                    protocols::unistore::UniStore::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
@@ -82,9 +79,6 @@ async fn main() {
                 "redblue-mod" => {
                     protocols::redblue_modified::RedBlueModified::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
-                "unistore" => {
-                    protocols::unistore::UniStore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
-                },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
@@ -105,13 +99,10 @@ async fn main() {
                 "redblue-mod" => {
                     protocols::redblue_modified::RedBlueModified::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
-                "unistore" => {
-                    protocols::unistore::UniStore::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
-                },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
-        _ => panic!("bad datatype argument, options are: counter, non_neg_counter, tpcc")
+        _ => panic!("bad datatype argument, options are: counter, non-neg-counter, tpcc")
     }
 
     println!("Started Server.");

@@ -111,7 +111,7 @@ impl<O: Operation> RedBlue<O> {
                     tokio::spawn(async move {
                         let id = protocol.generate_transaction_id().await;
                         let snapshot = protocol.snapshot_barrier().await;
-                        let transaction = Transaction { id, snapshot, op: query };
+                        let transaction = Transaction { id, snapshot, op: Some(query) };
                         protocol.waiting_transactions.lock().await.insert(id, result_sender);
                         protocol.sequencer.append(transaction).await;
                     });

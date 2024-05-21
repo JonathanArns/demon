@@ -118,15 +118,20 @@ impl<O: Operation> Storage<O> {
         }
 
         // execute the transaction
-        let output = t.op.apply(&mut state_latch);
+        let output = if let Some(op) = t.op {
+            let output = op.apply(&mut state_latch);
 
-        // update weak snapshot state
-        t.op.rollback_conflicting_state(&state_latch, &mut weak_state_latch);
-        for op in weak_latch.iter() {
-            if t.op.is_conflicting(&op.value) {
-                op.value.apply(&mut weak_state_latch);
+            // update weak snapshot state
+            op.rollback_conflicting_state(&state_latch, &mut weak_state_latch);
+            for weak in weak_latch.iter() {
+                if op.is_conflicting(&weak.value) {
+                    weak.value.apply(&mut weak_state_latch);
+                }
             }
-        }
+            output
+        } else {
+            None
+        };
 
         QueryResult{ value: output }
     }

@@ -109,7 +109,11 @@ impl<O: Operation> Storage<O> {
         }
 
         // execute the transaction
-        let output = t.op.apply(&mut state_latch);
-        QueryResult{ value: output }
+        if let Some(op) = t.op {
+            let output = op.apply(&mut state_latch);
+            QueryResult{ value: output }
+        } else {
+            QueryResult{ value: None }
+        }
     }
 }

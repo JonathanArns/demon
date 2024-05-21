@@ -6,7 +6,6 @@ pub mod redblue;
 pub mod redblue_modified;
 pub mod strict;
 pub mod causal;
-pub mod unistore;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TransactionId(NodeId, u64);

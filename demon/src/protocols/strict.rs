@@ -76,7 +76,7 @@ impl<O: Operation> Strict<O> {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 let id = proto.generate_transaction_id().await;
                 let snapshot = Snapshot::new(&[]); // dummy snapshot, because we don't need it
-                let transaction = Transaction { id, snapshot, op: query };
+                let transaction = Transaction { id, snapshot, op: Some(query) };
                 proto.waiting_transactions.lock().await.insert(id, result_sender);
                 proto.sequencer.append(transaction).await;
             }
@@ -88,11 +88,13 @@ impl<O: Operation> Strict<O> {
                 match e {
                     SequencerEvent::Decided(decided_entries) => {
                         for transaction in decided_entries {
-                            let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);
-                            let response = proto.storage.exec(transaction.op).await;
-                            if let Some(sender) = result_sender {
-                                // this node has a client waiting for this response
-                                sender.send(response).unwrap();
+                            if let Some(op) = transaction.op {
+                                let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);
+                                let response = proto.storage.exec(op).await;
+                                if let Some(sender) = result_sender {
+                                    // this node has a client waiting for this response
+                                    sender.send(response).unwrap();
+                                }
                             }
                         }
                     },
