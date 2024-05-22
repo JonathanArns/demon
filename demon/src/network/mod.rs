@@ -12,7 +12,7 @@ use serde::{Serialize, Deserialize, de::DeserializeOwned};
 const PORT: u16 = 1234;
 
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

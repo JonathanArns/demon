@@ -42,6 +42,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
                 self.weak_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => {
+                println!("I got the TOKEN!");
                 let TokenPass { next_red_sequence } = bincode::deserialize(&msg.payload).unwrap();
                 *self.next_red_sequence.lock().await = Some(next_red_sequence);
                 tokio::task::spawn(Self::forward_token_after_duration(
@@ -108,7 +109,8 @@ impl<O: Operation> Gemini<O> {
         let msg = TokenPass { next_red_sequence: latch.expect("should have token") };
         *latch = None;
         let my_id = network.my_id().await;
-        let nodes = network.nodes().await;
+        let mut nodes = network.nodes().await;
+        nodes.sort_unstable();
         let idx = nodes.iter().position(|x| *x == my_id).unwrap();
         let next_id = nodes[(idx + 1) % nodes.len()];
         network.send(next_id, Message {
