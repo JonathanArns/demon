@@ -25,9 +25,8 @@ impl<O: Operation> MsgHandler<Message> for Strict<O> {
             Component::Sequencer => {
                 self.sequencer.handle_msg(msg.payload).await;
             },
-            Component::WeakReplication => {
-                unreachable!()
-            }
+            Component::WeakReplication => unreachable!(),
+            Component::Protocol => unreachable!(),
         }
     }
 }

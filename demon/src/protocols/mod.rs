@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 pub mod demon;
 pub mod redblue;
 pub mod redblue_modified;
+pub mod gemini;
 pub mod strict;
 pub mod causal;
 
@@ -14,6 +15,7 @@ pub struct TransactionId(NodeId, u64);
 pub enum Component {
     Sequencer,
     WeakReplication,
+    Protocol,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

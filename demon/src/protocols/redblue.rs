@@ -35,7 +35,8 @@ impl<O: Operation> MsgHandler<Message> for RedBlue<O> {
             },
             Component::WeakReplication => {
                 self.weak_replication.handle_msg(from, msg.payload).await;
-            }
+            },
+            Component::Protocol => unreachable!(),
         }
     }
 }

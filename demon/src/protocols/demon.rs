@@ -33,7 +33,8 @@ impl<O: Operation> MsgHandler<Message> for DeMon<O> {
             },
             Component::WeakReplication => {
                 self.weak_replication.handle_msg(from, msg.payload).await;
-            }
+            },
+            Component::Protocol => unreachable!(),
         }
     }
 }

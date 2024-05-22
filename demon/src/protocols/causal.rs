@@ -22,9 +22,8 @@ impl<O: Operation> MsgHandler<Message> for Causal<O> {
             Component::WeakReplication => {
                 self.weak_replication.handle_msg(from, msg.payload).await;
             },
-            Component::Sequencer => {
-                unreachable!()
-            },
+            Component::Protocol => unreachable!(),
+            Component::Sequencer => unreachable!(),
         }
     }
 }

@@ -59,6 +59,9 @@ async fn main() {
                 "redblue-mod" => {
                     protocols::redblue_modified::RedBlueModified::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
+                "gemini" => {
+                    protocols::gemini::Gemini::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
@@ -79,6 +82,9 @@ async fn main() {
                 "redblue-mod" => {
                     protocols::redblue_modified::RedBlueModified::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
+                "gemini" => {
+                    protocols::gemini::Gemini::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
@@ -98,6 +104,9 @@ async fn main() {
                 },
                 "redblue-mod" => {
                     protocols::redblue_modified::RedBlueModified::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "gemini" => {
+                    protocols::gemini::Gemini::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
