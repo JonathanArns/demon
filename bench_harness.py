@@ -169,9 +169,14 @@ def run_bench(bench_config, nodes):
             file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
         result = subprocess.run(command, capture_output=True, text=True)
 
-        # TODO: collect results
-        print(f"res: {result.stdout}\nerr: {result.stderr}")
-        return None
+        data = json.loads(result.stdout)
+        data["datatype"] = bench_config["cluster_config"]["datatype"]
+        data["proto"] = bench_config["cluster_config"]["proto"]
+        data["cluster_size"] = len(args)
+        data["duration"] = bench_config["settings"]["duration"]
+        data["num_clients"] = bench_config["settings"]["num_clients"]
+
+        return data
 
     else:
         print("Bad benchmark type. choose one of: micro, tpcc")
