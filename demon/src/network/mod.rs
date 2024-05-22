@@ -324,6 +324,7 @@ where
         handler: Arc<RwLock<Option<Arc<dyn MsgHandler<T>>>>>,
     ) -> anyhow::Result<()> {
         let mut msg_handler: Option<Arc<dyn MsgHandler<T>>> = None;
+        let mut payload_queue = Some(vec![]);
         while let Some(data) = reader.try_next().await? {
             let NetworkMsg::<T>{ from, msg } = bincode::deserialize(&data).unwrap();
             match msg {
@@ -332,8 +333,14 @@ where
                         handler.handle_msg(from, msg).await;
                     } else {
                         if let Some(h) = handler.read().await.clone() {
+                            for (from, msg) in payload_queue.unwrap().into_iter() {
+                                h.handle_msg(from, msg).await;
+                            }
                             h.handle_msg(from, msg).await;
                             msg_handler = Some(h);
+                            payload_queue = None;
+                        } else {
+                            payload_queue.as_mut().unwrap().push((from, msg));
                         }
                     }
                 },
