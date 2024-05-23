@@ -10,7 +10,14 @@ import pandas as pd
 from multiprocessing import Pool
 
 
-def run_benches_from_file(path, write_output=True, output_file="experiment_output.csv"):
+def run_bench_loop(path):
+    counter = 1
+    while True:
+        run_benches_from_file(path, write_output=False, silent=True)
+        print(f"ran {counter} times")
+        counter += 1
+
+def run_benches_from_file(path, write_output=True, output_file="experiment_output.csv", silent=False):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
@@ -26,14 +33,14 @@ def run_benches_from_file(path, write_output=True, output_file="experiment_outpu
 
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
-            output = run_bench(bench_config, nodes)
+            output = run_bench(bench_config, nodes, silent)
             if output is not None:
                 results.append(output)
     
     df = pd.DataFrame(results)
     if write_output:
         df.to_csv(output_file, index=False)
-    else:
+    elif not silent:
         print(df)
 
 def expand_multi_bench_config(multi_config):
@@ -105,14 +112,15 @@ def run_micro(args):
     return measurements
 
 previous_tpcc_settings = None
-def run_bench(bench_config, nodes):
+def run_bench(bench_config, nodes, silent=False):
     """
     Runs a benchmark according to the specified config.
 
     Returns a flat dict containing measurements and parameters, to be inserted as a row into a DataFrame.
     """
     global previous_tpcc_settings
-    print(f"running: {bench_config}")
+    if not silent:
+        print(f"running: {bench_config}")
     reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
     time.sleep(1)
     if "micro" == bench_config["type"]:
@@ -266,6 +274,7 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     write_output = True
     output_file = "experiment_output.csv"
+    loop = False
     if "--no-write" in args:
         args.remove("--no-write")
         write_output = False
@@ -277,9 +286,16 @@ if __name__ == "__main__":
         idx = args.index("-o")
         args.pop(idx)
         output_file = args.pop(idx)
+    elif "--loop" in args:
+        args.remove("--loop")
+        loop = True
 
     if len(args) < 1:
         print("argument required to specify input file")
         exit()
     path = args[0]
-    run_benches_from_file(path, write_output, output_file)
+    
+    if loop:
+        run_bench_loop(path)
+    else:
+        run_benches_from_file(path, write_output, output_file)

@@ -2,7 +2,7 @@ use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, s
 use async_trait::async_trait;
 use omnipaxos::storage::{Entry, NoSnapshot};
 use serde::{Deserialize, Serialize};
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{TransactionId, Component, Message};
@@ -234,10 +234,36 @@ impl<O: Operation> Unistore<O> {
         tokio::spawn(async move {
             let mut waiting_blue_ops: Vec<TaggedEntry<TaggedWeakOp<O>>> = vec![];
             loop {
-                let e = weak_replication_events.recv().await.unwrap();
-                match e {
-                    WeakEvent::Deliver(new_op) => {
-                        // first, execute waiting ops that this might depend on
+                select! {
+                    e = weak_replication_events.recv() => {
+                        match e.unwrap() {
+                            WeakEvent::Deliver(new_op) => {
+                                // first, execute waiting ops that this might depend on
+                                let transaction_count = *proto.decided_transaction_count.read().await;
+                                let mut i = 0;
+                                while i < waiting_blue_ops.len() {
+                                    let op = &waiting_blue_ops[i];
+                                    if transaction_count >= op.value.transaction_count {
+                                        let op = waiting_blue_ops.remove(i);
+                                        proto.storage.exec_blue(op.value.op, op.node).await;
+                                    } else {
+                                        i += 1;
+                                    }
+                                }
+                                // then execute or queue this op, depending on if it needs to wait for a red operation
+                                if new_op.value.transaction_count > transaction_count {
+                                    waiting_blue_ops.push(new_op);
+                                } else {
+                                    proto.storage.exec_blue(new_op.value.op, new_op.node).await;
+                                }
+                            },
+                            WeakEvent::QuorumReplicated(snapshot) => {
+                                proto.quorum_replicated_snapshot.write().await.merge_inplace(&snapshot);
+                            },
+                        }
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                        // periodically run waiting blue ops to avoid deadlocks
                         let transaction_count = *proto.decided_transaction_count.read().await;
                         let mut i = 0;
                         while i < waiting_blue_ops.len() {
@@ -249,15 +275,6 @@ impl<O: Operation> Unistore<O> {
                                 i += 1;
                             }
                         }
-                        // then execute or queue this op, depending on if it needs to wait for a red operation
-                        if new_op.value.transaction_count > transaction_count {
-                            waiting_blue_ops.push(new_op);
-                        } else {
-                            proto.storage.exec_blue(new_op.value.op, new_op.node).await;
-                        }
-                    },
-                    WeakEvent::QuorumReplicated(snapshot) => {
-                        proto.quorum_replicated_snapshot.write().await.merge_inplace(&snapshot);
                     },
                 }
             }
