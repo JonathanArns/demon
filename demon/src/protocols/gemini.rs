@@ -42,13 +42,12 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
                 self.weak_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => {
-                println!("I got the TOKEN!");
                 let TokenPass { next_red_sequence } = bincode::deserialize(&msg.payload).unwrap();
                 *self.next_red_sequence.lock().await = Some(next_red_sequence);
                 tokio::task::spawn(Self::forward_token_after_duration(
                     self.next_red_sequence.clone(),
                     self.network.clone(),
-                    Duration::from_millis(100)
+                    Duration::from_millis(1)
                 ));
             }
         }

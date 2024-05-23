@@ -5,6 +5,7 @@ pub mod demon;
 pub mod redblue;
 pub mod redblue_modified;
 pub mod gemini;
+pub mod unistore;
 pub mod strict;
 pub mod causal;
 

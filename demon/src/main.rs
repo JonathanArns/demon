@@ -62,6 +62,9 @@ async fn main() {
                 "gemini" => {
                     protocols::gemini::Gemini::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
+                "unistore" => {
+                    protocols::unistore::Unistore::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
@@ -85,6 +88,9 @@ async fn main() {
                 "gemini" => {
                     protocols::gemini::Gemini::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
+                "unistore" => {
+                    protocols::unistore::Unistore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
@@ -107,6 +113,9 @@ async fn main() {
                 },
                 "gemini" => {
                     protocols::gemini::Gemini::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                },
+                "unistore" => {
+                    protocols::unistore::Unistore::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
                 },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
