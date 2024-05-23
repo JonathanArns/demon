@@ -10,7 +10,7 @@ import pandas as pd
 from multiprocessing import Pool
 
 
-def run_benches_from_file(path, write_output=True):
+def run_benches_from_file(path, write_output=True, output_file="experiment_output.csv"):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
@@ -32,7 +32,7 @@ def run_benches_from_file(path, write_output=True):
     
     df = pd.DataFrame(results)
     if write_output:
-        df.to_csv("experiment_output.csv", index=False)
+        df.to_csv(output_file, index=False)
     else:
         print(df)
 
@@ -265,12 +265,21 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     write_output = True
+    output_file = "experiment_output.csv"
     if "--no-write" in args:
         args.remove("--no-write")
         write_output = False
+    elif "--output-file" in args:
+        idx = args.index("--output-file")
+        args.pop(idx)
+        output_file = args.pop(idx)
+    elif "-o" in args:
+        idx = args.index("-o")
+        args.pop(idx)
+        output_file = args.pop(idx)
 
     if len(args) < 1:
         print("argument required to specify input file")
         exit()
     path = args[0]
-    run_benches_from_file(path, write_output)
+    run_benches_from_file(path, write_output, output_file)
