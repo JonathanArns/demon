@@ -23,6 +23,9 @@ impl DB {
     }
 
     fn wh_mut(&mut self, w_id: &u16) -> &mut ByWarehouse {
+        if !self.by_warehouse.contains_key(w_id) {
+            self.by_warehouse.insert(*w_id, Default::default());
+        }
         self.by_warehouse.get_mut(w_id).unwrap()
     }
 }
@@ -374,7 +377,7 @@ impl Operation for TpccOp {
 
     fn is_semiserializable_strong(&self) -> bool {
         match *self {
-            Self::LoadTuples {..} => false,
+            Self::LoadTuples {..} => true,
             Self::Delivery {..} => false,
             Self::NewOrder {..} => true,
             Self::OrderStatus {..} => false,
@@ -407,7 +410,10 @@ impl Operation for TpccOp {
 
     fn is_conflicting(&self, other: &Self) -> bool {
         match *self {
-            Self::LoadTuples {..} => true,
+            Self::LoadTuples {..} => match other {
+                Self::LoadTuples {..} => false,
+                _ => {println!("{:?}", other); false},
+            },
             Self::Delivery {..} => true,
             Self::NewOrder { w_id: no_w_id, .. } => {
                 match other {
@@ -430,6 +436,9 @@ impl Operation for TpccOp {
         match self {
             Self::NewOrder { w_id, .. } => {
                 *target.wh_mut(w_id) = source.wh(w_id).clone();
+            },
+            Self::LoadTuples { .. } => {
+                *target = source.clone();
             },
             _ => unimplemented!("NewOrder is the only strong op"),
         }
@@ -514,7 +523,7 @@ impl Operation for TpccOp {
                             let w_ytd: f64 = values.next().unwrap().parse().unwrap();
                             let val = Warehouse{w_id, w_name, w_street_1, w_street_2, w_city, w_state, w_zip, w_tax, w_ytd};
                             state.warehouses.insert(w_id, val);
-                            state.by_warehouse.insert(w_id, Default::default());
+                            state.wh_mut(&w_id); // inserts if not there yet
                         }
                     },
                     "DISTRICT" => {
