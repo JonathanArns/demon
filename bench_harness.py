@@ -143,7 +143,7 @@ def run_bench(bench_config, nodes, silent=False):
         # record benchmark parameters
         data["datatype"] = bench_config["cluster_config"]["datatype"]
         data["proto"] = bench_config["cluster_config"]["proto"]
-        data["cluster_size"] = len(args)
+        data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
         data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
         data["read_ratio"] = bench_config["settings"]["read_ratio"]
         data["read_ratio"] = bench_config["settings"]["read_ratio"]
@@ -183,7 +183,7 @@ def run_bench(bench_config, nodes, silent=False):
         data = json.loads(result.stdout)
         data["datatype"] = bench_config["cluster_config"]["datatype"]
         data["proto"] = bench_config["cluster_config"]["proto"]
-        data["cluster_size"] = len(args)
+        data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
         data["duration"] = bench_config["settings"]["duration"]
         data["num_clients"] = bench_config["settings"]["num_clients"]
 
