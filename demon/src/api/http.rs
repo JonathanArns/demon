@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use axum::{async_trait, extract::State, routing::{get, post}, Json, Router};
+use axum::{async_trait, extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::{watch, mpsc, oneshot}, time::Instant};
 
@@ -33,17 +33,17 @@ impl<O: Operation> API<O> for HttpApi {
     }
 }
 
-async fn query_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>>, body: String) -> Json<Response<O>> {
+async fn query_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>>, body: String) -> Result<Json<Response<O>>, StatusCode> {
     let start_time = Instant::now();
     let (result_sender, result_receiver) = oneshot::channel();
-    let query = O::parse(&body).unwrap();
-    query_sender.send((query, result_sender)).await.unwrap();
-    let result = result_receiver.await.unwrap();
+    let query = O::parse(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    query_sender.send((query, result_sender)).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = result_receiver.await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let response = Response {
         data: result,
         latency: start_time.elapsed(),
     };
-    Json(response)
+    Ok(Json(response))
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +69,7 @@ struct BenchMetrics {
     pub throughput: u64,
 }
 
-async fn bench_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>>, Json(settings): Json<BenchSettings>) -> Json<BenchMetrics> {
+async fn bench_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchMetrics>, StatusCode> {
     let (watch_sender, watcher) = watch::channel(false);
 
     // set up the clients
@@ -87,38 +87,40 @@ async fn bench_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O
 
     // collect the results
     for f in futures {
-        measurements.extend_from_slice(&f.await.unwrap());
+        let data = f.await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        measurements.extend_from_slice(&data);
     }
 
     let metrics = BenchMetrics {
         mean_latency: measurements.iter().map(|m| m.latency.as_millis() as f64).sum::<f64>() / measurements.len() as f64,
         throughput: measurements.len() as u64 / settings.duration,
     };
-    Json(metrics)
+    Ok(Json(metrics))
 }
 
 async fn run_client<O: Operation>(
     mut watcher: watch::Receiver<bool>,
     query_sender: mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>,
     settings: BenchSettings,
-) -> Vec<Measurement> {
+) -> anyhow::Result<Vec<Measurement>> {
     let mut measurements = vec![];
     
     // wait for the benchmark to start
-    watcher.wait_for(|v| *v).await.unwrap();
+    watcher.wait_for(|v| *v).await?;
     watcher.mark_unchanged();
     loop {
         let query = O::gen_query(&settings);
         let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();
-        query_sender.send((query, result_sender)).await.unwrap();
-        let _result = result_receiver.await.unwrap();
+        query_sender.send((query, result_sender)).await?;
+        let _result = result_receiver.await?;
         measurements.push(Measurement{latency: start_time.elapsed()});
 
-        if watcher.has_changed().unwrap() {
+        if watcher.has_changed()? {
             break
         }
     }
     
-    measurements
+    Ok(measurements)
 }
