@@ -180,12 +180,16 @@ def run_bench(bench_config, nodes, silent=False):
             file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
         result = subprocess.run(command, capture_output=True, text=True)
 
-        data = json.loads(result.stdout)
-        data["datatype"] = bench_config["cluster_config"]["datatype"]
-        data["proto"] = bench_config["cluster_config"]["proto"]
-        data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
-        data["duration"] = bench_config["settings"]["duration"]
-        data["num_clients"] = bench_config["settings"]["num_clients"]
+        try:
+            data = json.loads(result.stdout)
+            data["datatype"] = bench_config["cluster_config"]["datatype"]
+            data["proto"] = bench_config["cluster_config"]["proto"]
+            data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
+            data["duration"] = bench_config["settings"]["duration"]
+            data["num_clients"] = bench_config["settings"]["num_clients"]
+        except Exception as e:
+            print(f"couldn't load TPCC results with exception {e}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+            return None
 
         return data
 
