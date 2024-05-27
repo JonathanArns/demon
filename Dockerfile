@@ -24,8 +24,9 @@ RUN pip install flask execnet requests
 # setup ssh server for distributed tpcc
 RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 RUN sed -i 's/\#Port 22/Port 2200/g' /etc/ssh/sshd_config
-RUN useradd -m -s /bin/bash jonathan.arns
-# RUN echo "bilbo:insecure" | chpasswd
+RUN useradd -m -s /bin/bash jonathan
+RUN echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINPmhm+I1a07tMT51Vol6xMkQ03sfnEv+yNoTH/K5n5h jarns@kth.se" > /home/jonathan/.ssh/authorized_keys
+RUN chmod 600 /home/jonathan/.ssh/authorized_keys
 EXPOSE 2200
 COPY ./py-tpcc /workspace/py-tpcc
 
