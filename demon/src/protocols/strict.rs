@@ -7,7 +7,7 @@ use super::{TransactionId, Component, Message};
 
 /// A basic deterministic implementation of strictly serializable replication
 pub struct Strict<O: Operation> {
-    _network: Network<Message>,
+    network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
@@ -33,13 +33,13 @@ impl<O: Operation> MsgHandler<Message> for Strict<O> {
 
 impl<O: Operation> Strict<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
-        let network = Network::connect(addrs, cluster_size).await.unwrap();
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
+        let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let my_id = network.my_id().await;
         let proto = Arc::new(Self {
-            _network: network.clone(),
+            network: network.clone(),
             storage,
             sequencer,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
@@ -68,7 +68,7 @@ impl<O: Operation> Strict<O> {
         mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
         api: Box<dyn API<O>>,
     ) {
-        let mut api_events = api.start().await;
+        let mut api_events = api.start(self.network.clone()).await;
         let proto = self.clone();
         tokio::spawn(async move {
             loop {

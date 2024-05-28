@@ -2,10 +2,11 @@ use std::{collections::HashMap, net::{SocketAddr, IpAddr}, sync::Arc, time::Dura
 
 use anyhow::bail;
 use async_trait::async_trait;
-use tokio::{net::{TcpListener, tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream, ToSocketAddrs, lookup_host}, sync::{Mutex, RwLock}};
+use tokio::{net::{lookup_host, tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpListener, TcpStream, ToSocketAddrs}, select, sync::{broadcast, Mutex, RwLock}, time::Instant};
 use tokio_util::{codec::{LengthDelimitedCodec, FramedWrite, FramedRead}, bytes::Bytes};
 use futures::{SinkExt, TryStreamExt};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use rand::{thread_rng, Rng};
 
 
 /// The port we listen on.
@@ -18,6 +19,7 @@ pub struct NodeId(pub u32);
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Peer {
     pub id: NodeId,
+    pub name: Option<String>,
     pub addr: IpAddr,
 }
 
@@ -31,15 +33,31 @@ struct NetworkMsg<T> {
 enum Message<T> {
     /// A payload message by the application.
     Payload(T),
-    /// A join request by a new node.
-    Join,
-    /// The unique ID assigned to a newly joined node by the root node 1.
-    AssignId(NodeId),
+    /// A join request by a new node. Contains the node's name.
+    Join(Option<String>),
+    /// The unique ID assigned to a newly joined node by the root node 1. Contains the root node's name.
+    AssignId(NodeId, Option<String>),
     /// Information about peers' addresses in the network.
     Peers(Vec<Peer>),
     /// The number of peers this node knows.
     AckPeers(u32),
+    /// Used for latency measurements.
+    /// Contains a random unique ID.
+    Ping(u32),
+    /// Used for latency measurements.
+    /// Contains the ping request's unique ID.
+    PingResponse(u32),
 }
+
+/// Internal network control events.
+#[derive(Clone, Debug)]
+enum InternalEvent {
+    /// Generated when receiving a PingResponse.
+    PingResponse(u32, NodeId),
+    /// A peer acknowledged knowing about this many peers.
+    AckPeers(NodeId, u32),
+}
+
 
 /// Handles incoming payload messages from the network.
 #[async_trait]
@@ -80,8 +98,8 @@ where
     ///
     /// The first node in a cluster should be created with `addrs = None`, all subsequent nodes
     /// should connect to that root node to join the cluster.
-    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32) -> anyhow::Result<Self> {
-        let network = Self {inner: Arc::new(NetworkInner::new(NodeId(0)).await)};
+    pub async fn connect<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, name: Option<String>) -> anyhow::Result<Self> {
+        let network = Self {inner: Arc::new(NetworkInner::new(NodeId(0), name).await)};
         tokio::task::spawn(network.inner.clone().listen());
         tokio::task::spawn(network.inner.clone().send_loop());
 
@@ -92,7 +110,7 @@ where
                 if r.is_err() {
                     continue
                 }
-                let join_msg: Bytes = bincode::serialize(&NetworkMsg{from: NodeId(0), msg: Message::<T>::Join}).unwrap().into();
+                let join_msg: Bytes = bincode::serialize(&NetworkMsg{from: NodeId(0), msg: Message::<T>::Join(network.inner.name.clone())}).unwrap().into();
                 network.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(join_msg.clone()).await?;
                 // retry until we are assigned an ID
                 loop {
@@ -172,6 +190,38 @@ where
             latch.push((peer, msg.clone()));
         }
     }
+
+    /// Measures the round trip latency to all peers.
+    /// Includes the peer's name.
+    pub async fn measure_round_trips(&self) -> Vec<(NodeId, Option<String>, Duration)> {
+        let ping_id: u32 = thread_rng().gen();
+        let mut result = vec![];
+        let peers = self.peers().await;
+        let start_time = Instant::now();
+        // send the ping broadcast
+        {
+            let ping_msg = NetworkMsg {
+                from: self.my_id().await,
+                msg: Message::Ping(ping_id),
+            };
+            let mut latch = self.inner.outgoing_buffer.lock().await;
+            for peer in peers.iter() {
+                latch.push((*peer, ping_msg.clone()));
+            }
+        }
+        // wait for responses
+        let mut receiver = self.inner.internal_events_channel.subscribe();
+        while result.len() < peers.len() {
+            if let InternalEvent::PingResponse(id, from) = receiver.recv().await.unwrap() {
+                if id == ping_id {
+                    result.push((from, start_time.elapsed()));
+                }
+            }
+        }
+        // attach peer's names to the output
+        let peers = self.inner.peers.read().await;
+        result.into_iter().map(|(id, time)| (id, peers.get(&id).unwrap().name.clone(), time)).collect()
+    }
 }
 
 pub struct NetworkInner<T>
@@ -179,13 +229,12 @@ where
     T: 'static + Serialize + DeserializeOwned + Send + Sync + Clone,
 {
     id: RwLock<NodeId>,
+    name: Option<String>,
     peers: RwLock<HashMap<NodeId, Peer>>,
     streams: Mutex<HashMap<IpAddr, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
     outgoing_buffer: Mutex<Vec<(NodeId, NetworkMsg<T>)>>,
     handler: Arc<RwLock<Option<Arc<dyn MsgHandler<T>>>>>,
-
-    /// root node state
-    acked_peers: Mutex<HashMap<NodeId, u32>>,
+    internal_events_channel: broadcast::Sender<InternalEvent>,
 }
 
 impl<T> NetworkInner<T>
@@ -199,15 +248,16 @@ where
             .new_codec()
     }
 
-    async fn new(id: NodeId) -> Self {
+    async fn new(id: NodeId, name: Option<String>) -> Self {
+        let (internal_sender, _) = broadcast::channel(128);
         Self {
             id: RwLock::new(id),
+            name,
             peers: Default::default(),
             streams: Default::default(),
             outgoing_buffer: Default::default(),
             handler: Default::default(),
-
-            acked_peers: Default::default(),
+            internal_events_channel: internal_sender,
         }
     }
 
@@ -283,16 +333,32 @@ where
     /// A loop only to be run on the root node.
     /// Ensures that all other peers eventually know each other.
     async fn root_only_loop(self: Arc<Self>) {
+        let mut acked_peers: HashMap<NodeId, u32> = Default::default();
+        let mut receiver = self.internal_events_channel.subscribe();
         loop {
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-            let peers: Vec<Peer> = self.peers.read().await.values().map(|p| p.to_owned()).collect();
-            let num_peers = peers.len();
-            let msg = NetworkMsg{from: *self.id.read().await, msg: Message::<T>::Peers(peers)};
-            let mut buf = self.outgoing_buffer.lock().await;
-            for (id, num) in self.acked_peers.lock().await.iter() {
-                if (*num as usize) < num_peers {
-                    buf.push((*id, msg.clone()));
-                }
+            select! {
+                _ = tokio::time::sleep(Duration::from_millis(1000)) => {
+                    let peers: Vec<Peer> = self.peers.read().await.values().map(|p| p.to_owned()).collect();
+                    let num_peers = peers.len();
+                    let msg = NetworkMsg{from: *self.id.read().await, msg: Message::<T>::Peers(peers)};
+                    let mut buf = self.outgoing_buffer.lock().await;
+                    for (id, num) in acked_peers.iter() {
+                        if (*num as usize) < num_peers {
+                            buf.push((*id, msg.clone()));
+                        }
+                    }
+                },
+                event = receiver.recv() => match event {
+                    Ok(InternalEvent::AckPeers(from, num_peers)) => {
+                        if !acked_peers.contains_key(&from) {
+                            acked_peers.insert(from, num_peers);
+                        } else {
+                            let num = acked_peers.get_mut(&from).unwrap();
+                            *num = num_peers.max(*num);
+                        }
+                    },
+                    _ => (),
+                },
             }
         }
     }
@@ -344,31 +410,33 @@ where
                         }
                     }
                 },
-                Message::Join => {
+                Message::Join(name) => {
                     // only handle if we are the root node
                     if *self.id.read().await == NodeId(1) {
                         let mut new_id;
                         {
                             let mut peers = self.peers.write().await;
                             new_id = NodeId(peers.len() as u32 + 2);
-                            for Peer{id, addr} in peers.values() {
+                            for Peer{id, addr, ..} in peers.values() {
                                 if *addr == peer_addr {
                                     new_id = *id;
                                 }
                             }
-                            peers.insert(new_id, Peer{id: new_id, addr: peer_addr});
+                            peers.insert(new_id, Peer{id: new_id, addr: peer_addr, name});
                         }
-                        self.acked_peers.lock().await.insert(new_id, 0);
+                        self.internal_events_channel.send(
+                            InternalEvent::AckPeers(new_id, 0)
+                        ).unwrap();
                         let msg = NetworkMsg{
                             from: NodeId(1),
-                            msg: Message::<T>::AssignId(new_id),
+                            msg: Message::<T>::AssignId(new_id, self.name.clone()),
                         };
                         self.internal_send(new_id, msg).await;
                         self.broadcast_peers().await;
                     }
                 },
-                Message::AssignId(id) => {
-                    self.peers.write().await.insert(from, Peer{id: from, addr: peer_addr});
+                Message::AssignId(id, name) => {
+                    self.peers.write().await.insert(from, Peer{id: from, addr: peer_addr, name});
                     *self.id.write().await = id;
                 },
                 Message::Peers(peers) => {
@@ -386,7 +454,21 @@ where
                     self.internal_send(from, msg).await;
                 },
                 Message::AckPeers(num_ack) => {
-                    self.acked_peers.lock().await.insert(from, num_ack);
+                    let _ = self.internal_events_channel.send(
+                        InternalEvent::AckPeers(from, num_ack)
+                    );
+                },
+                Message::Ping(id) => {
+                    let msg = NetworkMsg{
+                        from: *self.id.read().await,
+                        msg: Message::PingResponse(id),
+                    };
+                    self.internal_send(from, msg).await;
+                },
+                Message::PingResponse(id) => {
+                    let _ = self.internal_events_channel.send(
+                        InternalEvent::PingResponse(id, from)
+                    );
                 },
             }
         }

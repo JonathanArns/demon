@@ -19,14 +19,17 @@ def start_server():
         proto = config["proto"]
         datatype = config["datatype"]
         addr = config.get("addr", None)
+        name = config.get("name", None)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
     try:
-        if addr is None:
-            process = subprocess.Popen(["demon", "--proto", proto, "--datatype", datatype, "--cluster-size", cluster_size])
-        else:
-            process = subprocess.Popen(["demon", "--proto", proto, "--datatype", datatype, "--cluster-size", cluster_size, "--addr", addr])
+        command = ["demon", "--proto", proto, "--datatype", datatype, "--cluster-size", cluster_size]
+        if not addr is None:
+            command += ["--addr", addr]
+        if not name is None:
+            command += ["--replica-name", name]
+        process = subprocess.Popen(command)
         return jsonify({"message": "server started", "pid": process.pid}), 200
     except Exception as e:
         print(e, file=sys.stderr)

@@ -1,5 +1,6 @@
 #!/bin/python
 
+import os
 import sys
 import time
 import copy
@@ -17,31 +18,44 @@ def run_bench_loop(path):
         print(f"ran {counter} times")
         counter += 1
 
-def run_benches_from_file(path, write_output=True, output_file="experiment_output.csv", silent=False):
+def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
     """
+    try:
+        os.mkdir(output_dir)
+    except Exception as e:
+        pass
     with open(path, 'r') as file:
         data = json.load(file)
     nodes = data["nodes"]
     
-    results = []
+    micro_results = []
+    tpcc_results = []
 
-    # local only
-    # set_latency(10, nodes)
+    rtt_latencies = measure_rtt_latency(nodes)
 
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
             output = run_bench(bench_config, nodes, silent)
             if output is not None:
-                results.append(output)
+                if "tpcc" == bench_config["type"]:
+                    tpcc_results.append(output)
+                elif "micro" == bench_config["type"]:
+                    micro_results.append(output)
     
-    df = pd.DataFrame(results)
+    tpcc_df = pd.DataFrame(tpcc_results)
+    micro_df = pd.DataFrame(micro_results)
     if write_output:
-        df.to_csv(output_file, index=False)
+        tpcc_df.to_csv(os.path.join(output_dir, "tpcc.csv"), index=False)
+        micro_df.to_csv(os.path.join(output_dir, "micro_bench.csv"), index=False)
+        with open(os.path.join(output_dir, "rtt_latencies.json"), "w") as f:
+            json.dump(rtt_latencies, f, indent=4)
     elif not silent:
-        print(df)
+        print(tpcc_df)
+        print(micro_df)
+        print(rtt_latencies)
 
 def expand_multi_bench_config(multi_config):
     """
@@ -239,7 +253,8 @@ def start_servers(cluster_config, nodes):
         config = {
             "proto": cluster_config["proto"],
             "datatype": cluster_config["datatype"],
-            "cluster_size": len(cluster_config["node_ids"])
+            "cluster_size": len(cluster_config["node_ids"]),
+            "name": str(node_id),
         }
         if root_node is None:
             root_node = node
@@ -263,6 +278,23 @@ def start_servers(cluster_config, nodes):
     # just to make sure everything had more than enough time to be fully running
     time.sleep(1)
 
+def measure_rtt_latency(nodes):
+    # start a cluster with all nodes
+    ensure_cluster_state({
+        "proto": "demon",
+        "datatype": "non-neg-counter",
+        "node_ids": [id for id in nodes.keys()],
+    }, nodes)
+
+    latencies = {}
+    for id, node in nodes.items():
+        resp = requests.get(f"http://{node['ip']}:{node['db_port']}/measure_rtt_latency")
+        measurements = resp.json()
+        latencies[id] = {}
+        for item in measurements:
+            latencies[id][item[1]] = item[2]
+    return latencies
+
 def set_latency(ms, nodes):
     for node in nodes.values():
         body = { "cmd": f"tc qdisc add dev eth0 root netem delay {ms}ms" }
@@ -277,19 +309,19 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     write_output = True
-    output_file = "experiment_output.csv"
+    output_dir = "./experiment_output"
     loop = False
     if "--no-write" in args:
         args.remove("--no-write")
         write_output = False
-    elif "--output-file" in args:
+    elif "--output-dir" in args:
         idx = args.index("--output-file")
         args.pop(idx)
-        output_file = args.pop(idx)
+        output_dir = args.pop(idx)
     elif "-o" in args:
         idx = args.index("-o")
         args.pop(idx)
-        output_file = args.pop(idx)
+        output_dir = args.pop(idx)
     elif "--loop" in args:
         args.remove("--loop")
         loop = True
@@ -302,4 +334,4 @@ if __name__ == "__main__":
     if loop:
         run_bench_loop(path)
     else:
-        run_benches_from_file(path, write_output, output_file)
+        run_benches_from_file(path, write_output, output_dir)

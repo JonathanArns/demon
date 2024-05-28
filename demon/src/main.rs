@@ -34,6 +34,9 @@ struct Arguments {
 
     #[arg(short = 't', long = "datatype")]
     datatype: String,
+
+    #[arg(short = 'n', long = "replica-name")]
+    name: Option<String>,
 }
 
 #[tokio::main]
@@ -45,25 +48,25 @@ async fn main() {
         "non-neg-counter" => {
             match &args.protocol[..] {
                 "demon" => {
-                    protocols::demon::DeMon::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::demon::DeMon::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "strict" => {
-                    protocols::strict::Strict::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::strict::Strict::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "causal" => {
-                    protocols::causal::Causal::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::causal::Causal::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue" => {
-                    protocols::redblue::RedBlue::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::redblue::RedBlue::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue-mod" => {
-                    protocols::redblue_modified::RedBlueModified::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::redblue_modified::RedBlueModified::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "gemini" => {
-                    protocols::gemini::Gemini::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::gemini::Gemini::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "unistore" => {
-                    protocols::unistore::Unistore::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::unistore::Unistore::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
@@ -71,25 +74,25 @@ async fn main() {
         "counter" => {
             match &args.protocol[..] {
                 "demon" => {
-                    protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::demon::DeMon::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "strict" => {
-                    protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::strict::Strict::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "causal" => {
-                    protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue" => {
-                    protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue-mod" => {
-                    protocols::redblue_modified::RedBlueModified::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::redblue_modified::RedBlueModified::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "gemini" => {
-                    protocols::gemini::Gemini::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::gemini::Gemini::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "unistore" => {
-                    protocols::unistore::Unistore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::unistore::Unistore::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
@@ -97,25 +100,25 @@ async fn main() {
         "tpcc" => {
             match &args.protocol[..] {
                 "demon" => {
-                    protocols::demon::DeMon::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::demon::DeMon::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "strict" => {
-                    protocols::strict::Strict::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::strict::Strict::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "causal" => {
-                    protocols::causal::Causal::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::causal::Causal::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue" => {
-                    protocols::redblue::RedBlue::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::redblue::RedBlue::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue-mod" => {
-                    protocols::redblue_modified::RedBlueModified::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::redblue_modified::RedBlueModified::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "gemini" => {
-                    protocols::gemini::Gemini::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::gemini::Gemini::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "unistore" => {
-                    protocols::unistore::Unistore::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api).await;
+                    protocols::unistore::Unistore::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };

@@ -4,7 +4,7 @@ use axum::{async_trait, extract::State, http::StatusCode, routing::{get, post}, 
 use serde::{Deserialize, Serialize};
 use tokio::{sync::{watch, mpsc, oneshot}, time::Instant};
 
-use crate::{rdts::Operation, storage::QueryResult};
+use crate::{network::{Network, NodeId}, protocols::Message, rdts::Operation, storage::QueryResult};
 
 use super::API;
 
@@ -18,14 +18,15 @@ struct Response<O: Operation> {
 
 #[async_trait]
 impl<O: Operation> API<O> for HttpApi {
-    async fn start(self: Box<Self>) -> mpsc::Receiver<(O, oneshot::Sender<QueryResult<O>>)> {
+    async fn start(self: Box<Self>, network: Network<Message>) -> mpsc::Receiver<(O, oneshot::Sender<QueryResult<O>>)> {
         let (query_sender, query_receiver) = mpsc::channel(1000);
         tokio::task::spawn(async move {
             let app = Router::new()
                 .route("/", get(|| async { "Hello world!" }))
                 .route("/query", post(query_endpoint))
                 .route("/bench", post(bench_endpoint))
-                .with_state(query_sender);
+                .route("/measure_rtt_latency", get(latency_endpoint))
+                .with_state((network, query_sender));
             let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
             axum::serve(listener, app).await.unwrap()
         });
@@ -33,7 +34,7 @@ impl<O: Operation> API<O> for HttpApi {
     }
 }
 
-async fn query_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>>, body: String) -> Result<Json<Response<O>>, StatusCode> {
+async fn query_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, body: String) -> Result<Json<Response<O>>, StatusCode> {
     let start_time = Instant::now();
     let (result_sender, result_receiver) = oneshot::channel();
     let query = O::parse(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -44,6 +45,12 @@ async fn query_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O
         latency: start_time.elapsed(),
     };
     Ok(Json(response))
+}
+
+/// Measures round trip latency to all peers
+async fn latency_endpoint<O: Operation>(State((network, _query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>) -> Result<Json<Vec<(NodeId, Option<String>, Duration)>>, StatusCode> {
+    let latencies = network.measure_round_trips().await;
+    Ok(Json(latencies))
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +76,7 @@ struct BenchMetrics {
     pub throughput: u64,
 }
 
-async fn bench_endpoint<O: Operation>(State(query_sender): State<mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchMetrics>, StatusCode> {
+async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchMetrics>, StatusCode> {
     let (watch_sender, watcher) = watch::channel(false);
 
     // set up the clients

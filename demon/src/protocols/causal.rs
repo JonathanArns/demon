@@ -7,7 +7,7 @@ use super::{Component, Message};
 
 /// A basic implementation of causal order RDTs
 pub struct Causal<O: Operation> {
-    _network: Network<Message>,
+    network: Network<Message>,
     storage: Storage<O>,
     weak_replication: WeakReplication<O>,
 }
@@ -30,12 +30,12 @@ impl<O: Operation> MsgHandler<Message> for Causal<O> {
 
 impl<O: Operation> Causal<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
-        let network = Network::connect(addrs, cluster_size).await.unwrap();
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
+        let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
         let proto = Arc::new(Self {
-            _network: network.clone(),
+            network: network.clone(),
             storage,
             weak_replication,
         });
@@ -54,7 +54,7 @@ impl<O: Operation> Causal<O> {
         mut weak_replication_events: Receiver<WeakEvent<O>>,
         api: Box<dyn API<O>>,
     ) {
-        let mut api_events = api.start().await;
+        let mut api_events = api.start(self.network.clone()).await;
         let proto = self.clone();
         tokio::spawn(async move {
             loop {

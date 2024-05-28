@@ -43,8 +43,8 @@ impl<O: Operation> MsgHandler<Message> for RedBlue<O> {
 
 impl<O: Operation> RedBlue<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>) -> Arc<Self> {
-        let network = Network::connect(addrs, cluster_size).await.unwrap();
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
+        let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
         let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
@@ -101,7 +101,7 @@ impl<O: Operation> RedBlue<O> {
         api: Box<dyn API<O>>,
     ) {
         let my_id = self.network.my_id().await;
-        let mut api_events = api.start().await;
+        let mut api_events = api.start(self.network.clone()).await;
         let proto = self.clone();
         tokio::spawn(async move {
             loop {

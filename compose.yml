@@ -13,7 +13,7 @@ services:
     ports:
       - 8080:80
       - 5000:5000
-      - 2200:22
+      - 2200:2200
 
   alice:
     container_name: alice
@@ -28,9 +28,9 @@ services:
     ports:
       - 8081:80
       - 5001:5000
-      - 2201:22
-    environment:
-      RUST_BACKTRACE: 1
+      - 2201:2200
+    # environment:
+    #   RUST_BACKTRACE: 1
     depends_on:
       - bob
 
@@ -47,23 +47,6 @@ services:
     ports:
       - 8082:80
       - 5002:5000
-      - 2202:22
+      - 2202:2200
     depends_on:
       - bob
-
-  # bilbo1:
-  #   container_name: bilbo1
-  #   build:
-  #     context: .
-  #     dockerfile: tpcc_client.Dockerfile
-  #   # command: tail -f /dev/null
-  #   ports:
-  #     - 2200:22
-
-  # bilbo2:
-  #   container_name: bilbo2
-  #   build:
-  #     context: .
-  #     dockerfile: tpcc_client.Dockerfile
-  #   ports:
-  #     - 2201:22

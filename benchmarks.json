@@ -25,12 +25,12 @@
 		{
 			"type": "micro",
 			"cluster_config": {
-				"proto": ["demon", "redblue-mod", "redblue"],
+				"proto": ["demon"],
 				"datatype": ["non-neg-counter"],
 				"node_ids": ["bob", "alice", "fabi"]
 			},
 			"settings": {
-				"strong_ratio": [0.05, 0.5, 0.95],
+				"strong_ratio": [0.05],
 				"read_ratio": [0.1],
 				"num_clients": [10],
 				"key_range": [10],
@@ -40,18 +40,18 @@
 		{
 			"type": "tpcc",
 			"cluster_config": {
-				"proto": ["demon", "redblue-mod"],
+				"proto": ["demon"],
 				"datatype": ["tpcc"],
 				"node_ids": ["bob", "alice", "fabi"]
 			},
 			"client_nodes": [
-				"-p 2200 bilbo@localhost",
-				"-p 2201 bilbo@localhost",
-				"-p 2202 bilbo@localhost"
+				"-p 2200 jonathan@localhost",
+				"-p 2201 jonathan@localhost",
+				"-p 2202 jonathan@localhost"
 			],
 			"settings": {
 				"warehouses": [4],
-				"scalefactor": [500],
+				"scalefactor": [10],
 				"num_clients": [1],
 				"duration": [30]
 			}
