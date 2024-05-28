@@ -80,7 +80,6 @@ def expand_multi_bench_config(multi_config):
                 for settings in expand_tpcc_bench_settings(multi_config["settings"]):
                     yield {
                         "cluster_config": cluster_config,
-                        "client_nodes": multi_config["client_nodes"],
                         "type": multi_config["type"],
                         "settings": settings,
                     }
@@ -191,7 +190,8 @@ def run_bench(bench_config, nodes, silent=False):
                 start_servers(bench_config["cluster_config"], nodes)
         with open("./tpcc_driver.conf", 'w') as file:
             # we assume that the clients are co-located with a db node that they can reach at localhost:80
-            file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(bench_config['client_nodes'])}\npath: /workspace/py-tpcc/pytpcc")
+            client_ssh = [f"-p {nodes[id]['ssh_port']} {nodes[id]['ssh_user']}@{nodes[id]['ip']}" for id in bench_config["cluster_config"]["node_ids"]]
+            file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(client_ssh)}\npath: /workspace/py-tpcc/pytpcc")
         result = subprocess.run(command, capture_output=True, text=True)
 
         try:
@@ -247,7 +247,7 @@ def start_servers(cluster_config, nodes):
     Starts a cluster with the given config.
     Only returns once all replicas pass the health check.
     """
-    root_node = None
+    root_addr = None
     for node_id in cluster_config["node_ids"]:
         node = nodes[node_id]
         config = {
@@ -256,10 +256,13 @@ def start_servers(cluster_config, nodes):
             "cluster_size": len(cluster_config["node_ids"]),
             "name": str(node_id),
         }
-        if root_node is None:
-            root_node = node
+        if root_addr is None:
+            if node["internal_ip"] is None:
+                root_addr = f"{node['ip']}:{node['internal_port']}"
+            else:
+                root_addr = f"{node['internal_ip']}:{node['internal_port']}"
         else:
-            config["addr"] = root_node["internal_addr"]
+            config["addr"] = root_addr
         requests.post(f"http://{node['ip']}:{node['control_port']}/start", json=config)
 
     time.sleep(1)
@@ -275,6 +278,7 @@ def start_servers(cluster_config, nodes):
         except:
             attempts += 1
             time.sleep(attempts)
+    assert attempts < 5, "could not start cluster"
     # just to make sure everything had more than enough time to be fully running
     time.sleep(1)
 

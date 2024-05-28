@@ -4,19 +4,28 @@
 			"ip": "localhost",
 			"control_port": 5000,
 			"db_port": 8080,
-			"internal_addr": "bob:1234"
+			"ssh_port": 2200,
+			"ssh_user": "jonathan",
+			"internal_port": 1234,
+			"internal_ip": "bob"
 		},
 		"alice": {
 			"ip": "localhost",
 			"control_port": 5001,
 			"db_port": 8081,
-			"internal_addr": "alice:1234"
+			"ssh_port": 2201,
+			"ssh_user": "jonathan",
+			"internal_port": 1234,
+			"internal_ip": "alice"
 		},
 		"fabi": {
 			"ip": "localhost",
 			"control_port": 5002,
 			"db_port": 8082,
-			"internal_addr": "fabi:1234"
+			"ssh_port": 2202,
+			"ssh_user": "jonathan",
+			"internal_port": 1234,
+			"internal_ip": "fabi"
 		}
 	},
 
