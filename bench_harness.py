@@ -52,12 +52,12 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             bench_state["finished_benches"].append(repr)
             if output is not None:
                 if "tpcc" == bench_config["type"]:
-                    bench_state[tpcc_results].append(output)
+                    bench_state["tpcc_results"].append(output)
                 elif "micro" == bench_config["type"]:
-                    micro_results.append(output)
+                    bench_state["micro_results"].append(output)
             if write_output:
                 with open(os.path.join(output_dir, "bench_state.json"), "w") as file:
-                    bench_state = json.dump(bench_state, file)
+                    json.dump(bench_state, file)
     
     # write final results as csv files
     tpcc_df = pd.DataFrame(bench_state["tpcc_results"])
