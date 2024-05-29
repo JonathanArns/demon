@@ -1,51 +1,68 @@
+import os
+import sys
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# Load CSV file into a DataFrame
-df = pd.read_csv('./experiment_output.csv')
 
-# Extract data from columns
-non_neg_counter_df = df[df['datatype'] == 'non-neg-counter']
-strong_ratio = non_neg_counter_df[non_neg_counter_df['proto'] == 'demon']['strong_ratio']
-latency_demon = non_neg_counter_df[non_neg_counter_df['proto'] == 'demon']['total_mean_latency']
-latency_redblue = non_neg_counter_df[non_neg_counter_df['proto'] == 'redblue']['total_mean_latency']
-latency_strict = non_neg_counter_df[non_neg_counter_df['proto'] == 'strict']['total_mean_latency']
-latency_causal = non_neg_counter_df[non_neg_counter_df['proto'] == 'causal']['total_mean_latency']
+def plot_tpcc(df, dir_path):
+    pass
 
-throughput_demon = non_neg_counter_df[non_neg_counter_df['proto'] == 'demon']['total_throughput']
-throughput_redblue = non_neg_counter_df[non_neg_counter_df['proto'] == 'redblue']['total_throughput']
-throughput_strict = non_neg_counter_df[non_neg_counter_df['proto'] == 'strict']['total_throughput']
-throughput_causal = non_neg_counter_df[non_neg_counter_df['proto'] == 'causal']['total_throughput']
+def plot_micro(df, dir_path):
+    datatypes = df["datatype"].unique()
+    for dtype in datatypes:
+        plot_single_micro(df[df["datatype"] == dtype], dtype, dir_path)
 
+def plot_single_micro(df, datatype, dir_path):
+    protocols = df["proto"].unique()
+    client_numbers = df["num_clients"].unique()
+    strong_ratio = df[df["proto"] == protocols[0]]["strong_ratio"]
+    # aggregate the data
+    mean_latencies = {}
+    throughputs = {}
+    for proto in protocols:
+        proto_df = df[df["proto"] == proto]
+        grouped = proto_df.groupby("strong_ratio")
+        idx = grouped["total_throughput"].idxmax()
+        rows_with_max_throughput = proto_df.loc[idx]
+        throughputs[proto] = rows_with_max_throughput["total_throughput"]
+        mean_latencies[proto] = rows_with_max_throughput["total_mean_latency"]
 
-# Plotting
-plt.figure(figsize=(10, 6))  # Adjust size as needed
-plt.suptitle('non-negative counter (3 replicas, 20ms round-trip between replicas, 10 clients per replica)')
+    plt.figure(figsize=(10, 6))  # Adjust size as needed
+    # plt.suptitle('non-negative counter (3 replicas, 20ms round-trip between replicas, 10 clients per replica)')
 
+    plt.subplot(1, 2, 1)
+    for proto, vals in mean_latencies.items():
+        plt.plot(strong_ratio, vals, marker="o", label=proto)
+    plt.xlabel("strong operation ratio")
+    plt.ylabel("mean latency (ms)")
+    plt.title(f"{datatype} mean latency at max throughput")
+    plt.legend()
 
-plt.subplot(1, 2, 1)
-plt.plot(strong_ratio, latency_demon, marker='o', label='semi-serializable')
-plt.plot(strong_ratio, latency_redblue, marker='o', label='RedBlue')
-plt.plot(strong_ratio, latency_strict, marker='o', label='strict')
-plt.plot(strong_ratio, latency_causal, marker='o', label='causal')
-plt.xlabel('strong operation (subtract) ratio')
-plt.ylabel('mean latency (ms)')
-plt.title('latency')
-plt.legend()
+    plt.subplot(1, 2, 2)
+    for proto, vals in throughputs.items():
+        plt.plot(strong_ratio, vals, marker="o", label=proto)
+    plt.yscale("log")
+    plt.xlabel("strong operation ratio")
+    plt.ylabel("throughput (ops/s)")
+    plt.title(f"{datatype} max throughput")
+    plt.legend()
 
+    plt.savefig(os.path.join(dir_path, f"{datatype}_plot.png"), dpi=300)
+    
 
-plt.subplot(1, 2, 2)
-plt.plot(strong_ratio, throughput_demon, marker='o', label='semi-serializable')
-plt.plot(strong_ratio, throughput_redblue, marker='o', label='RedBlue')
-plt.plot(strong_ratio, throughput_strict, marker='o', label='strict')
-plt.plot(strong_ratio, throughput_causal, marker='o', label='causal')
-plt.yscale('log')
-plt.xlabel('strong operation (subtract) ratio')
-plt.ylabel('throughput (ops/s)')
-plt.title('throughput')
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("argument required to specify input directory")
+        exit()
 
-# TODO: use max throughput instead of at a random client count
-
-plt.legend()
-
-plt.savefig('line_plot.png', dpi=300)
+    args = sys.argv[1:]
+    path = args[0]
+    
+    try:
+        plot_micro(pd.read_csv(os.path.join(path, "micro_bench.csv")), path)
+    except Exception as e:
+        print(e)
+    try:
+        plot_tpcc(pd.read_csv(os.path.join(path, "tpcc.csv")), path)
+    except Exception as e:
+        print(e)
