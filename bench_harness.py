@@ -31,31 +31,47 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
         data = json.load(file)
     nodes = data["nodes"]
     
-    micro_results = []
-    tpcc_results = []
-
-    rtt_latencies = measure_rtt_latency(nodes)
+    # try to load previous bench state
+    try:
+        with open(os.path.join(output_dir, "bench_state.json"), "r") as file:
+            bench_state = json.load(file)
+    except Exception:
+        bench_state = {
+            "micro_results": [],
+            "tpcc_results": [],
+            "finished_benches": [],
+            "rtt_latencies": measure_rtt_latency(nodes),
+        }
 
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
+            repr = json.dumps(bench_config, sort_keys=True)
+            if repr in bench_state["finished_benches"]:
+                continue
             output = run_bench(bench_config, nodes, silent)
+            bench_state["finished_benches"].append(repr)
             if output is not None:
                 if "tpcc" == bench_config["type"]:
-                    tpcc_results.append(output)
+                    bench_state[tpcc_results].append(output)
                 elif "micro" == bench_config["type"]:
                     micro_results.append(output)
+            if write_output:
+                with open(os.path.join(output_dir, "bench_state.json"), "w") as file:
+                    bench_state = json.dump(bench_state, file)
     
-    tpcc_df = pd.DataFrame(tpcc_results)
-    micro_df = pd.DataFrame(micro_results)
+    # write final results as csv files
+    tpcc_df = pd.DataFrame(bench_state["tpcc_results"])
+    micro_df = pd.DataFrame(bench_state["micro_results"])
     if write_output:
-        tpcc_df.to_csv(os.path.join(output_dir, "tpcc.csv"), index=False)
-        micro_df.to_csv(os.path.join(output_dir, "micro_bench.csv"), index=False)
+        if len(tpcc_results) > 0:
+            tpcc_df.to_csv(os.path.join(output_dir, "tpcc.csv"), index=False)
+        if len(micro_results) > 0:
+            micro_df.to_csv(os.path.join(output_dir, "micro_bench.csv"), index=False)
         with open(os.path.join(output_dir, "rtt_latencies.json"), "w") as f:
-            json.dump(rtt_latencies, f, indent=4)
+            json.dump(bench_state["rtt_latencies"], f, indent=4)
     elif not silent:
         print(tpcc_df)
         print(micro_df)
-        print(rtt_latencies)
 
 def expand_multi_bench_config(multi_config):
     """
@@ -180,14 +196,15 @@ def run_bench(bench_config, nodes, silent=False):
                    "--duration", duration]
         if not reconfigured:
             if previous_tpcc_settings is not None \
-                and previous_tpcc_settings["scalefactor"] == scalefactor \
-                and previous_tpcc_settings["warehouses"] == warehouses:
+                and str(previous_tpcc_settings["scalefactor"]) == scalefactor \
+                and str(previous_tpcc_settings["warehouses"]) == warehouses:
                 # we can re-use the data from the previous tpcc run
                 command.append("--no-load")
             else:
                 # need to re-start the servers to have a clean db
                 stop_servers(bench_config["cluster_config"], nodes)
                 start_servers(bench_config["cluster_config"], nodes)
+        previous_tpcc_settings = copy.deepcopy(settings)
         with open("./tpcc_driver.conf", 'w') as file:
             # we assume that the clients are co-located with a db node that they can reach at localhost:80
             client_ssh = [f"-p {nodes[id]['ssh_port']} {nodes[id]['ssh_user']}@{nodes[id]['ip']}" for id in bench_config["cluster_config"]["node_ids"]]
