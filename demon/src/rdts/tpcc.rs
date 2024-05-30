@@ -46,6 +46,22 @@ pub struct ByWarehouse {
     history: Vec<History>,
     /// (c_w_id, c_d_id, c_id) -> Customer
     customers: HashMap<(u8, usize), Customer>,
+    /// c_last -> [Customer]
+    customers_by_name: HashMap<String, Vec<Customer>>,
+}
+
+impl ByWarehouse {
+    fn get_customer_by_name(&self, c_last: &str) -> &Customer {
+        let customers = self.customers_by_name.get(c_last).unwrap();
+        let count = customers.len();
+        &customers[count / 2]
+    }
+
+    fn get_customer_by_name_mut(&mut self, c_last: &str) -> &mut Customer {
+        let customers = self.customers_by_name.get_mut(c_last).unwrap();
+        let count = customers.len();
+        &mut customers[count / 2]
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -399,12 +415,14 @@ impl Operation for TpccOp {
 
     fn is_por_conflicting(&self, other: &Self) -> bool {
         match *self {
+            Self::Delivery{..} | Self::NewOrder {..} => match *other {
+                Self::Delivery{..} | Self::NewOrder {..} => true,
+                _ => false,
+            },
             Self::LoadTuples {..} => false,
-            Self::Delivery {..} => todo!(),
-            Self::NewOrder {..} => todo!(),
-            Self::OrderStatus {..} => todo!(),
-            Self::Payment {..} => todo!(),
-            Self::StockLevel {..} => todo!(),
+            Self::OrderStatus {..} => false,
+            Self::Payment {..} => false,
+            Self::StockLevel {..} => false,
         }
     }
 
@@ -580,8 +598,13 @@ impl Operation for TpccOp {
                             let c_payment_cnt: usize = values.next().unwrap().parse().unwrap();
                             let c_delivery_cnt: usize = values.next().unwrap().parse().unwrap();
                             let c_data: String = values.next().unwrap().parse().unwrap();
-                            let val = Customer{c_id, c_d_id, c_w_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, c_payment_cnt, c_delivery_cnt, c_data};
-                            state.wh_mut(&c_w_id).customers.insert((c_d_id, c_id), val);
+                            let val = Customer{c_id, c_d_id, c_w_id, c_first, c_middle, c_last: c_last.clone(), c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_since, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, c_payment_cnt, c_delivery_cnt, c_data};
+                            state.wh_mut(&c_w_id).customers.insert((c_d_id, c_id), val.clone());
+                            if !state.wh(&c_w_id).customers_by_name.contains_key(&c_last) {
+                                state.wh_mut(&c_w_id).customers_by_name.insert(c_last, vec![val]);
+                            } else {
+                                state.wh_mut(&c_w_id).customers_by_name.get_mut(&c_last).unwrap().push(val);
+                            }
                         }
                     },
                     "HISTORY" => {
@@ -821,10 +844,7 @@ impl Operation for TpccOp {
                 let customer = if let Some(c_id) = c_id {
                     state.wh(w_id).customers.get(&(*d_id, *c_id)).unwrap()
                 } else {
-                    let count = state.wh(w_id).customers.values().filter(|c| c.c_last == *c_last).count();
-                    state.wh(w_id).customers.values().filter(|c| {
-                        c.c_last == *c_last
-                    }).skip((count / 2).min(count-1)).next().unwrap()
+                    state.wh(w_id).get_customer_by_name(c_last)
                 };
                 let order = state.wh(w_id).orders.values()
                     .filter(|o| o.o_d_id == *d_id && o.o_c_id == customer.c_id)
@@ -852,10 +872,7 @@ impl Operation for TpccOp {
                 let customer = if let Some(c_id) = c_id {
                     state.wh_mut(w_id).customers.get_mut(&(*d_id, *c_id)).unwrap()
                 } else {
-                    let count = state.wh(w_id).customers.values().filter(|c| c.c_last == *c_last).count();
-                    state.wh_mut(w_id).customers.values_mut().filter(|c| {
-                        c.c_last == *c_last
-                    }).skip((count / 2).min(count-1)).next().unwrap()
+                    state.wh_mut(w_id).get_customer_by_name_mut(c_last)
                 };
                 customer.c_balance -= h_amount;
                 customer.c_ytd_payment += h_amount;
