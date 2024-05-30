@@ -289,16 +289,23 @@ where
             let addr = self.lookup_peer(to).await?;
             to_flush.push(addr);
             if let Some(sender) = self.streams.lock().await.get_mut(&addr) {
-                sender.feed(bincode::serialize(&msg).unwrap().into()).await.unwrap(); // TOOD: handle send error
-                continue
+                if let Err(_) = sender.feed(bincode::serialize(&msg)?.into()).await {
+                    self.streams.lock().await.remove(&addr);
+                } else {
+                    continue
+                }
             }
             // create new connection if missing
             self.clone().connect(addr).await?;
-            self.streams.lock().await.get_mut(&addr).unwrap().feed(bincode::serialize(&msg).unwrap().into()).await.unwrap(); // TOOD: handle send error
+            if let Err(_) = self.streams.lock().await.get_mut(&addr).unwrap().feed(bincode::serialize(&msg)?.into()).await {
+                self.streams.lock().await.remove(&addr);
+            }
         }
         let mut latch = self.streams.lock().await;
         for addr in to_flush {
-            latch.get_mut(&addr).unwrap().flush().await.unwrap(); // TODO: handle send error
+            if let Err(_) = latch.get_mut(&addr).unwrap().flush().await {
+                latch.remove(&addr);
+            }
         }
         Ok(())
     }
@@ -307,16 +314,16 @@ where
     async fn connect(self: Arc<Self>, addr: IpAddr) -> anyhow::Result<()> {
         let stream = TcpStream::connect(SocketAddr::new(addr, PORT)).await?;
         stream.set_nodelay(true)?;
-        self.clone().handle_new_stream(stream, addr).await?;
+        self.clone().handle_new_stream(stream, addr).await;
         Ok(())
     }
 
     /// Starts listening and handling messages.
     async fn listen(self: Arc<Self>) -> anyhow::Result<()> {
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", PORT)).await.unwrap();
+        let listener = TcpListener::bind(format!("0.0.0.0:{}", PORT)).await?;
         loop {
             if let Ok((stream, peer_addr)) = listener.accept().await {
-                self.clone().handle_new_stream(stream, peer_addr.ip()).await.unwrap(); // TODO: real peer_id
+                self.clone().handle_new_stream(stream, peer_addr.ip()).await;
             } else {
                 todo!("handle listener error")
             }
@@ -363,7 +370,7 @@ where
         }
     }
 
-    async fn handle_new_stream(self: Arc<Self>, stream: TcpStream, peer_addr: IpAddr) -> anyhow::Result<()> {
+    async fn handle_new_stream(self: Arc<Self>, stream: TcpStream, peer_addr: IpAddr) {
         let (reader, writer) = stream.into_split();
         let framed_writer = FramedWrite::new(writer, Self::codec());
         let framed_reader = FramedRead::new(reader, Self::codec());
@@ -371,7 +378,6 @@ where
         let network_handle = self.clone();
         tokio::task::spawn(async move { network_handle.handle_read_half(framed_reader, peer_addr, msg_handler).await });
         self.streams.lock().await.insert(peer_addr, framed_writer);
-        Ok(())
     }
 
     async fn broadcast_peers(&self) {

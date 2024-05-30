@@ -63,9 +63,9 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
     tpcc_df = pd.DataFrame(bench_state["tpcc_results"])
     micro_df = pd.DataFrame(bench_state["micro_results"])
     if write_output:
-        if len(tpcc_results) > 0:
+        if len(bench_state["tpcc_results"]) > 0:
             tpcc_df.to_csv(os.path.join(output_dir, "tpcc.csv"), index=False)
-        if len(micro_results) > 0:
+        if len(bench_state["micro_results"]) > 0:
             micro_df.to_csv(os.path.join(output_dir, "micro_bench.csv"), index=False)
         with open(os.path.join(output_dir, "rtt_latencies.json"), "w") as f:
             json.dump(bench_state["rtt_latencies"], f, indent=4)
@@ -257,7 +257,16 @@ def stop_servers(cluster_config, nodes):
     """
     for node_id in cluster_config["node_ids"]:
         node = nodes[node_id]
-        requests.post(f"http://{node['ip']}:{node['control_port']}/stop")
+
+        attempts = 0
+        while attempts < 5:
+            try:
+                requests.post(f"http://{node['ip']}:{node['control_port']}/stop", timeout=3)
+                break
+            except:
+                attempts += 1
+                time.sleep(attempts)
+        assert attempts < 5, "could not stop node"
 
 def start_servers(cluster_config, nodes):
     """
@@ -290,7 +299,7 @@ def start_servers(cluster_config, nodes):
         try:
             for node_id in cluster_config["node_ids"]:
                 node = nodes[node_id]
-                requests.post(f"http://{node['ip']}:{node['db_port']}/")
+                requests.post(f"http://{node['ip']}:{node['db_port']}/", timeout=3)
             break
         except:
             attempts += 1
