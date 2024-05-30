@@ -20,6 +20,8 @@ use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Parser)]
 #[command(version = "1.0", about = "jonathan's hybrid consistency prototype", long_about = None)]
 struct Arguments {
@@ -126,7 +128,7 @@ async fn main() {
         _ => panic!("bad datatype argument, options are: counter, non-neg-counter, tpcc")
     }
 
-    println!("Started Server.");
+    println!("Started Server. Running version {}", VERSION);
 
 
     // listen for termination signals
