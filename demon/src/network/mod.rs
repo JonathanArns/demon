@@ -291,16 +291,16 @@ where
             if let Some(sender) = streams_lock.get_mut(&addr) {
                 if let Err(_) = sender.feed(bincode::serialize(&msg)?.into()).await {
                     streams_lock.remove(&addr);
-                } else {
-                    continue
                 }
-            }
-            drop(streams_lock);
-            // create new connection if missing
-            self.clone().connect(addr).await?;
-            streams_lock = self.streams.lock().await;
-            if let Err(_) = streams_lock.get_mut(&addr).unwrap().feed(bincode::serialize(&msg)?.into()).await {
-                streams_lock.remove(&addr);
+            } else {
+                // create new connection if missing
+                drop(streams_lock);
+                self.clone().connect(addr).await?;
+                streams_lock = self.streams.lock().await;
+
+                if let Err(_) = streams_lock.get_mut(&addr).unwrap().feed(bincode::serialize(&msg)?.into()).await {
+                    streams_lock.remove(&addr);
+                }
             }
         }
         for addr in to_flush {
