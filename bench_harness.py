@@ -14,11 +14,11 @@ from multiprocessing import Pool
 def run_bench_loop(path):
     counter = 1
     while True:
-        run_benches_from_file(path, write_output=False, silent=True)
+        run_benches_from_file(path, write_output=False, silent=True, latencies=False)
         print(f"ran {counter} times")
         counter += 1
 
-def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False):
+def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False, latencies=True):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
@@ -40,7 +40,7 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             "micro_results": [],
             "tpcc_results": [],
             "finished_benches": [],
-            "rtt_latencies": measure_rtt_latency(nodes),
+            "rtt_latencies": measure_rtt_latency(nodes) if latencies else None,
         }
 
     for conf in data["multi_bench_configs"]:
