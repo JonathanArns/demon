@@ -141,7 +141,7 @@ where
     /// Should be called with a cloned handle to the sequencer.
     async fn drive_omnipaxos(self) {
         loop {
-            tokio::time::sleep(Duration::from_micros(10000)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
             let mut latch = self.omnipaxos.lock().await;
             latch.tick();
             // flush OmniPaxos messages

@@ -128,7 +128,7 @@ async fn main() {
         _ => panic!("bad datatype argument, options are: counter, non-neg-counter, tpcc")
     }
 
-    println!("Started Server. Running version {}", VERSION);
+    println!("Started server version {}.", VERSION);
 
 
     // listen for termination signals

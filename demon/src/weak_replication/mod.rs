@@ -58,8 +58,6 @@ struct LocallyOrderedEntry<T> {
 
 /// An eventually consistent replication layer that replicates one totally ordered log per
 /// participant, and keeps track of which entries are quorum-replicated.
-///
-/// TODO: garbage collection / log compaction (should be possible for fully replicated entries)
 pub struct WeakReplication<T> {
     network: Network<Message>,
     event_sender: Sender<WeakEvent<T>>,

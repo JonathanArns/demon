@@ -30,6 +30,18 @@ struct NetworkMsg<T> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+enum SequencedNetworkMsg<T> {
+    Normal {
+        sequences: (u64, u64),
+        msg: NetworkMsg<T>,
+    },
+    MissingMessages {
+        from: NodeId,
+        highest_received: u64,
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message<T> {
     /// A payload message by the application.
     Payload(T),
@@ -102,15 +114,20 @@ where
         let network = Self {inner: Arc::new(NetworkInner::new(NodeId(0), name).await)};
         tokio::task::spawn(network.inner.clone().listen());
         tokio::task::spawn(network.inner.clone().send_loop());
+        tokio::task::spawn(network.inner.clone().gc());
 
         if let Some(addrs) = addrs {
             let mut connected = false;
+            let sequences = network.inner.gen_seq(NodeId(1)).await;
             for addr in lookup_host(addrs).await? {
                 let r = network.inner.clone().connect(addr.ip()).await;
                 if r.is_err() {
                     continue
                 }
-                let join_msg: Bytes = bincode::serialize(&NetworkMsg{from: NodeId(0), msg: Message::<T>::Join(network.inner.name.clone())}).unwrap().into();
+                let join_msg: Bytes = bincode::serialize(&SequencedNetworkMsg::Normal {
+                    sequences,
+                    msg: NetworkMsg{from: NodeId(0), msg: Message::<T>::Join(network.inner.name.clone())}
+                }).unwrap().into();
                 network.inner.streams.lock().await.get_mut(&addr.ip()).unwrap().send(join_msg.clone()).await?;
                 // retry until we are assigned an ID
                 loop {
@@ -168,15 +185,9 @@ where
 
     /// Buffers an outgoing message for sending.
     pub async fn send_batch(&self, messages: Vec<(NodeId, T)>) {
-        let my_id = self.my_id().await;
-        let msgs = messages.into_iter().map(|(to, msg)| {
-            let msg = NetworkMsg{
-                from: my_id,
-                msg: Message::Payload(msg),
-            };
-            (to, msg)
-        });
-        self.inner.outgoing_buffer.lock().await.extend(msgs);
+        for (to, msg) in messages {
+            self.send(to, msg).await
+        }
     }
 
     pub async fn broadcast(&self, message: T) {
@@ -185,9 +196,8 @@ where
             from: self.my_id().await,
             msg: Message::Payload(message),
         };
-        let mut latch = self.inner.outgoing_buffer.lock().await;
         for peer in peers {
-            latch.push((peer, msg.clone()));
+            self.inner.internal_send(peer, msg.clone()).await;
         }
     }
 
@@ -204,9 +214,8 @@ where
                 from: self.my_id().await,
                 msg: Message::Ping(ping_id),
             };
-            let mut latch = self.inner.outgoing_buffer.lock().await;
             for peer in peers.iter() {
-                latch.push((*peer, ping_msg.clone()));
+                self.inner.internal_send(*peer, ping_msg.clone()).await;
             }
         }
         // wait for responses
@@ -232,9 +241,16 @@ where
     name: Option<String>,
     peers: RwLock<HashMap<NodeId, Peer>>,
     streams: Mutex<HashMap<IpAddr, FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>>>,
-    outgoing_buffer: Mutex<Vec<(NodeId, NetworkMsg<T>)>>,
+    outgoing_buffer: Mutex<Vec<(NodeId, SequencedNetworkMsg<T>)>>,
     handler: Arc<RwLock<Option<Arc<dyn MsgHandler<T>>>>>,
     internal_events_channel: broadcast::Sender<InternalEvent>,
+
+    /// Used to re-send lost messages.
+    /// Sequence numbers start at 1 for the first message.
+    /// NodeId -> (incoming, outgoing, peer_acked)
+    sequence_nums: RwLock<HashMap<NodeId, (u64, u64, u64)>>,
+    /// hold messages that might need to be re-sent
+    waiting_for_ack_buffer: Mutex<HashMap<NodeId, Vec<SequencedNetworkMsg<T>>>>,
 }
 
 impl<T> NetworkInner<T>
@@ -255,9 +271,41 @@ where
             name,
             peers: Default::default(),
             streams: Default::default(),
-            outgoing_buffer: Default::default(),
             handler: Default::default(),
             internal_events_channel: internal_sender,
+
+            outgoing_buffer: Default::default(),
+            waiting_for_ack_buffer: Default::default(),
+
+            sequence_nums: Default::default(),
+        }
+    }
+
+    /// Checks if a received message is in sequence.
+    /// If sequence is correct, then the local sequence state is incremented and Ok(true) returned.
+    /// Ok(false) is returned, if the message is old and has already been delivered.
+    /// Otherwise returns local sequence state for this connection in Err(_).
+    async fn check_seq(&self, peer: &NodeId, received_sequences: (u64, u64)) -> Result<bool, (u64, u64)> {
+        if peer.0 == 0 {
+            // this is a newly joining peer
+            return Ok(true)
+        }
+        let mut lock = self.sequence_nums.write().await;
+        if let Some((incoming, outgoing, acked)) = lock.get_mut(peer) {
+            *acked = received_sequences.0.max(*acked);
+            if received_sequences.1 == *incoming + 1 {
+                *incoming += 1;
+                Ok(true)
+            } else if received_sequences.1 <= *incoming {
+                Ok(false)
+            } else {
+                Err((*incoming, *outgoing))
+            }
+        } else if received_sequences == (0, 1) {
+            lock.insert(*peer, (1, 0, 0));
+            Ok(true)
+        } else {
+            Err((0, 0))
         }
     }
 
@@ -266,9 +314,22 @@ where
         self.internal_send(to, NetworkMsg{from: *self.id.read().await, msg: Message::Payload(msg)}).await
     }
 
+    async fn gen_seq(&self, to: NodeId) -> (u64, u64) {
+        let mut lock = self.sequence_nums.write().await;
+        if let Some((incoming, outgoing, _)) = lock.get_mut(&to) {
+            *outgoing += 1;
+            (*incoming, *outgoing)
+        } else {
+            lock.insert(to, (0, 1, 0));
+            (0, 1)
+        }
+    }
+
     /// Buffers an outgoing message for sending.
     async fn internal_send(&self, to: NodeId, msg: NetworkMsg<T>) {
-        self.outgoing_buffer.lock().await.push((to, msg));
+        // generate sequence number
+        let sequences = self.gen_seq(to).await;
+        self.outgoing_buffer.lock().await.push((to, SequencedNetworkMsg::Normal{ sequences, msg }));
     }
 
     /// Looks up a peer's address.
@@ -285,13 +346,21 @@ where
         let mut to_flush = vec![];
         let buf = std::mem::take(&mut *self.outgoing_buffer.lock().await);
         let mut streams_lock = self.streams.lock().await;
+        let mut waiting_lock = self.waiting_for_ack_buffer.lock().await;
         for (to, msg) in buf {
+            if !waiting_lock.contains_key(&to) {
+                waiting_lock.insert(to, vec![]);
+            }
+            waiting_lock.get_mut(&to).unwrap().push(msg.clone());
             let addr = self.lookup_peer(to).await?;
             to_flush.push(addr);
             if let Some(sender) = streams_lock.get_mut(&addr) {
                 if let Err(_) = sender.feed(bincode::serialize(&msg)?.into()).await {
                     streams_lock.remove(&addr);
                 }
+                if thread_rng().gen_bool(0.001) { // DEBUG
+                    streams_lock.remove(&addr);  // DEBUG
+                }                               // DEBUG
             } else {
                 // create new connection if missing
                 drop(streams_lock);
@@ -351,10 +420,9 @@ where
                     let peers: Vec<Peer> = self.peers.read().await.values().map(|p| p.to_owned()).collect();
                     let num_peers = peers.len();
                     let msg = NetworkMsg{from: *self.id.read().await, msg: Message::<T>::Peers(peers)};
-                    let mut buf = self.outgoing_buffer.lock().await;
                     for (id, num) in acked_peers.iter() {
                         if (*num as usize) < num_peers {
-                            buf.push((*id, msg.clone()));
+                            self.internal_send(*id, msg.clone()).await;
                         }
                     }
                 },
@@ -387,7 +455,57 @@ where
         let peers = self.peers.read().await.values().map(|p| p.to_owned()).collect();
         let msg = NetworkMsg{from: *self.id.read().await, msg: Message::Peers(peers)};
         for id in self.peers.read().await.keys() {
-            self.outgoing_buffer.lock().await.push((*id, msg.clone()));
+            self.internal_send(*id, msg.clone()).await;
+        }
+    }
+
+    /// Schedules messages for re-sending.
+    async fn re_send_messages(&self, peer: NodeId, highest_received: u64) {
+        let mut waiting_lock = self.waiting_for_ack_buffer.lock().await;
+        let mut outgoing_lock = self.outgoing_buffer.lock().await;
+        if let Some(buf) = waiting_lock.get_mut(&peer) {
+            // skip messages that were already received
+            let mut i = 0;
+            while i < buf.len() {
+                if let SequencedNetworkMsg::Normal{ sequences, .. } = &buf[i] {
+                    if sequences.1 > highest_received {
+                        break
+                    }
+                }
+                i += 1;
+            }
+            buf.drain(0..i);
+            // schedule messages
+            let mut j = 0;
+            for msg in buf.iter() {
+                if let SequencedNetworkMsg::Normal{ sequences, .. } = msg {
+                    outgoing_lock.insert(j, (peer, msg.clone()));
+                    j += 1;
+                }
+            }
+        }
+    }
+
+    /// Periodically cleans up the messages waiting to be re-sent.
+    async fn gc(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut waiting_lock = self.waiting_for_ack_buffer.lock().await;
+            let seqs_lock = self.sequence_nums.read().await;
+            for (peer, buf) in waiting_lock.iter_mut() {
+                let (_, _, acked) = *seqs_lock.get(peer).unwrap();
+                // skip messages that were already received
+                let mut i = 0;
+                while i < buf.len() {
+                    if let SequencedNetworkMsg::Normal{ sequences, .. } = &buf[i] {
+                        if sequences.1 > acked {
+                            break
+                        }
+                    }
+                    i += 1;
+                }
+                buf.drain(0..i);
+            }
         }
     }
 
@@ -400,84 +518,113 @@ where
     ) -> anyhow::Result<()> {
         let mut msg_handler: Option<Arc<dyn MsgHandler<T>>> = None;
         let mut payload_queue = Some(vec![]);
+        let mut last_asked_for_out_of_sequence = Instant::now();
         while let Some(data) = reader.try_next().await? {
-            let NetworkMsg::<T>{ from, msg } = bincode::deserialize(&data).unwrap();
-            match msg {
-                Message::Payload(msg) => {
-                    if let Some(handler) = &msg_handler {
-                        handler.handle_msg(from, msg).await;
-                    } else {
-                        if let Some(h) = handler.read().await.clone() {
-                            for (from, msg) in payload_queue.unwrap().into_iter() {
-                                h.handle_msg(from, msg).await;
+            let deser: SequencedNetworkMsg::<T> = bincode::deserialize(&data).unwrap();
+            
+            // we handle these messages before checking the sequences
+            match deser {
+                SequencedNetworkMsg::MissingMessages{ from, highest_received } => {
+                    self.re_send_messages(from, highest_received).await;
+                },
+                SequencedNetworkMsg::Normal { sequences, msg } => {
+                    let NetworkMsg::<T>{ from, msg } = msg;
+                    match self.check_seq(&from, sequences).await {
+                        Ok(true) => (),
+                        Ok(false) => continue,
+                        Err(seq) => {
+                            // we got this msg out of sequence -> should ask for the missing messages
+                            // only ask at most once per second
+                            if last_asked_for_out_of_sequence.elapsed() > Duration::from_millis(1000) {
+                                last_asked_for_out_of_sequence = Instant::now();
+                                self.outgoing_buffer.lock().await.push((from, SequencedNetworkMsg::MissingMessages{
+                                    highest_received: seq.0,
+                                    from: *self.id.read().await,
+                                }));
                             }
-                            h.handle_msg(from, msg).await;
-                            msg_handler = Some(h);
-                            payload_queue = None;
-                        } else {
-                            payload_queue.as_mut().unwrap().push((from, msg));
+                            continue
                         }
                     }
-                },
-                Message::Join(name) => {
-                    // only handle if we are the root node
-                    if *self.id.read().await == NodeId(1) {
-                        let mut new_id;
-                        {
-                            let mut peers = self.peers.write().await;
-                            new_id = NodeId(peers.len() as u32 + 2);
-                            for Peer{id, addr, ..} in peers.values() {
-                                if *addr == peer_addr {
-                                    new_id = *id;
+                    match msg {
+                        Message::Payload(msg) => {
+                            if let Some(handler) = &msg_handler {
+                                handler.handle_msg(from, msg).await;
+                            } else {
+                                if let Some(h) = handler.read().await.clone() {
+                                    for (from, msg) in payload_queue.unwrap().into_iter() {
+                                        h.handle_msg(from, msg).await;
+                                    }
+                                    h.handle_msg(from, msg).await;
+                                    msg_handler = Some(h);
+                                    payload_queue = None;
+                                } else {
+                                    payload_queue.as_mut().unwrap().push((from, msg));
                                 }
                             }
-                            peers.insert(new_id, Peer{id: new_id, addr: peer_addr, name});
-                        }
-                        self.internal_events_channel.send(
-                            InternalEvent::AckPeers(new_id, 0)
-                        ).unwrap();
-                        let msg = NetworkMsg{
-                            from: NodeId(1),
-                            msg: Message::<T>::AssignId(new_id, self.name.clone()),
-                        };
-                        self.internal_send(new_id, msg).await;
-                        self.broadcast_peers().await;
+                        },
+                        Message::Join(name) => {
+                            // only handle if we are the root node
+                            if *self.id.read().await == NodeId(1) {
+                                let mut new_id;
+                                {
+                                    let mut peers = self.peers.write().await;
+                                    new_id = NodeId(peers.len() as u32 + 2);
+                                    for Peer{id, addr, ..} in peers.values() {
+                                        if *addr == peer_addr {
+                                            new_id = *id;
+                                        }
+                                    }
+                                    peers.insert(new_id, Peer{id: new_id, addr: peer_addr, name});
+                                }
+                                // make sure we know the sequence of this new peer
+                                let _ = self.check_seq(&new_id, (0, 1)).await;
+                                self.internal_events_channel.send(
+                                    InternalEvent::AckPeers(new_id, 0)
+                                ).unwrap();
+                                let msg = NetworkMsg{
+                                    from: NodeId(1),
+                                    msg: Message::<T>::AssignId(new_id, self.name.clone()),
+                                };
+                                self.internal_send(new_id, msg).await;
+                                self.broadcast_peers().await;
+                            }
+                        },
+                        Message::AssignId(id, name) => {
+                            self.peers.write().await.insert(from, Peer{id: from, addr: peer_addr, name});
+                            *self.id.write().await = id;
+                        },
+                        Message::Peers(peers) => {
+                            let mut my_peers = self.peers.write().await;
+                            let my_id = *self.id.read().await;
+                            for peer in peers {
+                                if peer.id != my_id {
+                                    my_peers.insert(peer.id, peer);
+                                }
+                            }
+                            let msg = NetworkMsg{
+                                from: *self.id.read().await,
+                                msg: Message::AckPeers(my_peers.len() as u32),
+                            };
+                            self.internal_send(from, msg).await;
+                        },
+                        Message::AckPeers(num_ack) => {
+                            let _ = self.internal_events_channel.send(
+                                InternalEvent::AckPeers(from, num_ack)
+                            );
+                        },
+                        Message::Ping(id) => {
+                            let msg = NetworkMsg{
+                                from: *self.id.read().await,
+                                msg: Message::PingResponse(id),
+                            };
+                            self.internal_send(from, msg).await;
+                        },
+                        Message::PingResponse(id) => {
+                            let _ = self.internal_events_channel.send(
+                                InternalEvent::PingResponse(id, from)
+                            );
+                        },
                     }
-                },
-                Message::AssignId(id, name) => {
-                    self.peers.write().await.insert(from, Peer{id: from, addr: peer_addr, name});
-                    *self.id.write().await = id;
-                },
-                Message::Peers(peers) => {
-                    let mut my_peers = self.peers.write().await;
-                    let my_id = *self.id.read().await;
-                    for peer in peers {
-                        if peer.id != my_id {
-                            my_peers.insert(peer.id, peer);
-                        }
-                    }
-                    let msg = NetworkMsg{
-                        from: *self.id.read().await,
-                        msg: Message::AckPeers(my_peers.len() as u32),
-                    };
-                    self.internal_send(from, msg).await;
-                },
-                Message::AckPeers(num_ack) => {
-                    let _ = self.internal_events_channel.send(
-                        InternalEvent::AckPeers(from, num_ack)
-                    );
-                },
-                Message::Ping(id) => {
-                    let msg = NetworkMsg{
-                        from: *self.id.read().await,
-                        msg: Message::PingResponse(id),
-                    };
-                    self.internal_send(from, msg).await;
-                },
-                Message::PingResponse(id) => {
-                    let _ = self.internal_events_channel.send(
-                        InternalEvent::PingResponse(id, from)
-                    );
                 },
             }
         }
