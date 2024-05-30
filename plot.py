@@ -14,8 +14,6 @@ def plot_micro(df, dir_path):
 
 def plot_single_micro(df, datatype, dir_path):
     protocols = df["proto"].unique()
-    client_numbers = df["num_clients"].unique()
-    strong_ratio = df[df["proto"] == protocols[0]]["strong_ratio"]
     # aggregate the data
     mean_latencies = {}
     throughputs = {}
@@ -24,15 +22,22 @@ def plot_single_micro(df, datatype, dir_path):
         grouped = proto_df.groupby("strong_ratio")
         idx = grouped["total_throughput"].idxmax()
         rows_with_max_throughput = proto_df.loc[idx]
-        throughputs[proto] = rows_with_max_throughput["total_throughput"]
-        mean_latencies[proto] = rows_with_max_throughput["total_mean_latency"]
+        print(rows_with_max_throughput[["num_clients", "proto", "datatype", "strong_ratio"]])
+        throughputs[proto] = {
+            "x": rows_with_max_throughput["strong_ratio"],
+            "y": rows_with_max_throughput["total_throughput"],
+        }
+        mean_latencies[proto] = {
+            "x": rows_with_max_throughput["strong_ratio"],
+            "y": rows_with_max_throughput["total_mean_latency"],
+        }
 
     plt.figure(figsize=(10, 6))  # Adjust size as needed
     # plt.suptitle('non-negative counter (3 replicas, 20ms round-trip between replicas, 10 clients per replica)')
 
     plt.subplot(1, 2, 1)
     for proto, vals in mean_latencies.items():
-        plt.plot(strong_ratio, vals, marker="o", label=proto)
+        plt.plot(vals["x"], vals["y"], marker="o", label=proto)
     plt.xlabel("strong operation ratio")
     plt.ylabel("mean latency (ms)")
     plt.title(f"{datatype} mean latency at max throughput")
@@ -40,7 +45,7 @@ def plot_single_micro(df, datatype, dir_path):
 
     plt.subplot(1, 2, 2)
     for proto, vals in throughputs.items():
-        plt.plot(strong_ratio, vals, marker="o", label=proto)
+        plt.plot(vals["x"], vals["y"], marker="o", label=proto)
     plt.yscale("log")
     plt.xlabel("strong operation ratio")
     plt.ylabel("throughput (ops/s)")
