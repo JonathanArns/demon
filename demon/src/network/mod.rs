@@ -281,30 +281,31 @@ where
     }
 
     /// Send buffered outgoing messages.
-    /// TODO: this locks and unlocks `self.streams` for each msg... seems not great maybe
     async fn flush(self: Arc<Self>) -> anyhow::Result<()> {
         let mut to_flush = vec![];
         let buf = std::mem::take(&mut *self.outgoing_buffer.lock().await);
+        let mut streams_lock = self.streams.lock().await;
         for (to, msg) in buf {
             let addr = self.lookup_peer(to).await?;
             to_flush.push(addr);
-            if let Some(sender) = self.streams.lock().await.get_mut(&addr) {
+            if let Some(sender) = streams_lock.get_mut(&addr) {
                 if let Err(_) = sender.feed(bincode::serialize(&msg)?.into()).await {
-                    self.streams.lock().await.remove(&addr);
+                    streams_lock.remove(&addr);
                 } else {
                     continue
                 }
             }
+            drop(streams_lock);
             // create new connection if missing
             self.clone().connect(addr).await?;
-            if let Err(_) = self.streams.lock().await.get_mut(&addr).unwrap().feed(bincode::serialize(&msg)?.into()).await {
-                self.streams.lock().await.remove(&addr);
+            streams_lock = self.streams.lock().await;
+            if let Err(_) = streams_lock.get_mut(&addr).unwrap().feed(bincode::serialize(&msg)?.into()).await {
+                streams_lock.remove(&addr);
             }
         }
-        let mut latch = self.streams.lock().await;
         for addr in to_flush {
-            if let Err(_) = latch.get_mut(&addr).unwrap().flush().await {
-                latch.remove(&addr);
+            if let Err(_) = streams_lock.get_mut(&addr).unwrap().flush().await {
+                streams_lock.remove(&addr);
             }
         }
         Ok(())
