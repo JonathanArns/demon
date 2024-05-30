@@ -304,8 +304,10 @@ where
             }
         }
         for addr in to_flush {
-            if let Err(_) = streams_lock.get_mut(&addr).unwrap().flush().await {
-                streams_lock.remove(&addr);
+            if let Some(stream) = streams_lock.get_mut(&addr) {
+                if let Err(_) = stream.flush().await {
+                    streams_lock.remove(&addr);
+                }
             }
         }
         Ok(())
