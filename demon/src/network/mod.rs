@@ -358,9 +358,6 @@ where
                 if let Err(_) = sender.feed(bincode::serialize(&msg)?.into()).await {
                     streams_lock.remove(&addr);
                 }
-                if thread_rng().gen_bool(0.001) { // DEBUG
-                    streams_lock.remove(&addr);  // DEBUG
-                }                               // DEBUG
             } else {
                 // create new connection if missing
                 drop(streams_lock);
