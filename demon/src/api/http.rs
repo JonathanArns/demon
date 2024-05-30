@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use axum::{async_trait, extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
-use tokio::{sync::{watch, mpsc, oneshot}, time::Instant};
+use tokio::{select, sync::{mpsc, oneshot, watch}, time::Instant};
 
 use crate::{network::{Network, NodeId}, protocols::Message, rdts::Operation, storage::QueryResult};
 
@@ -39,7 +39,15 @@ async fn query_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
     let (result_sender, result_receiver) = oneshot::channel();
     let query = O::parse(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
     query_sender.send((query, result_sender)).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let result = result_receiver.await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = select! {
+        res = result_receiver => {
+            res.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        },
+        // request timeout
+        _ = tokio::time::sleep(Duration::from_secs(5)) => {
+            Err(StatusCode::INTERNAL_SERVER_ERROR)?
+        },
+    };
     let response = Response {
         data: result,
         latency: start_time.elapsed(),
@@ -121,8 +129,13 @@ async fn run_client<O: Operation>(
         let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();
         query_sender.send((query, result_sender)).await?;
-        let _result = result_receiver.await?;
-        measurements.push(Measurement{latency: start_time.elapsed()});
+        select! {
+            _ = result_receiver => {
+                measurements.push(Measurement{latency: start_time.elapsed()});
+            },
+            // request timeout
+            _ = tokio::time::sleep(Duration::from_secs(3)) => (),
+        } 
 
         if watcher.has_changed()? {
             break
