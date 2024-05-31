@@ -122,6 +122,10 @@ impl Operation for RubisOp {
         }
     }
 
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+        todo!()
+    }
+
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
         match *self {
             Self::RegisterUser { ref id } => {

@@ -934,4 +934,8 @@ impl Operation for TpccOp {
     fn gen_query(_settings: &crate::api::http::BenchSettings) -> Self {
         unimplemented!("please use the py-tpcc driver implementation")
     }
+
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+        todo!()
+    }
 }

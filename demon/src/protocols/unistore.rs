@@ -141,7 +141,7 @@ impl<O: Operation> Unistore<O> {
                 } else {
                     // weak operation
                     let result = proto.storage.exec_blue(query.clone(), my_id).await;
-                    result_sender.send(result).unwrap();
+                    let _ = result_sender.send(result);
                     if query.is_writing() {
                         let tagged_op = TaggedWeakOp {
                             op: query,
@@ -214,7 +214,7 @@ impl<O: Operation> Unistore<O> {
                             let response = proto.storage.exec_red(transaction).await;
                             if let Some((sender, _retry_counter)) = result_sender {
                                 // this node has a client waiting for this response
-                                sender.send(response).unwrap();
+                                let _ = sender.send(response);
                             }
                         }
 

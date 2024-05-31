@@ -103,7 +103,7 @@ impl<O: Operation> DeMon<O> {
                 } else {
                     // weak operation
                     let result = demon.storage.exec_weak_query(query.clone(), my_id).await;
-                    result_sender.send(result).unwrap();
+                    let _ = result_sender.send(result);
                     if query.is_writing() {
                         demon.weak_replication.replicate(query).await;
                     }
@@ -121,7 +121,7 @@ impl<O: Operation> DeMon<O> {
                             let response = demon.storage.exec_transaction(transaction).await;
                             if let Some(sender) = result_sender {
                                 // this node has a client waiting for this response
-                                sender.send(response).unwrap();
+                                let _ = sender.send(response);
                             }
                         }
                     },

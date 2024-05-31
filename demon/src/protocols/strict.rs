@@ -92,7 +92,7 @@ impl<O: Operation> Strict<O> {
                                 let response = proto.storage.exec(op).await;
                                 if let Some(sender) = result_sender {
                                     // this node has a client waiting for this response
-                                    sender.send(response).unwrap();
+                                    let _ = sender.send(response);
                                 }
                             }
                         }

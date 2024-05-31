@@ -60,7 +60,7 @@ impl<O: Operation> Causal<O> {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 let result = proto.storage.exec(query.clone()).await;
-                result_sender.send(result).unwrap();
+                let _ = result_sender.send(result);
                 if query.is_writing() {
                     proto.weak_replication.replicate(query).await;
                 }

@@ -128,7 +128,7 @@ impl<O: Operation> Gemini<O> {
             while let Some(op) = latch.1.remove(&next_seq) {
                 let output = self.storage.exec(op).await;
                 if let Some(sender) = clients.remove(&next_seq) {
-                    sender.send(output).unwrap();
+                    let _ = sender.send(output);
                 }
                 next_seq += 1;
             }
@@ -162,7 +162,7 @@ impl<O: Operation> Gemini<O> {
                 } else {
                     // weak operation
                     let result = proto.storage.exec(query.clone()).await;
-                    result_sender.send(result).unwrap();
+                    let _ = result_sender.send(result);
                     if query.is_writing() {
                         let tagged_op = RedBlueOp::Blue(query);
                         proto.weak_replication.replicate(tagged_op).await;

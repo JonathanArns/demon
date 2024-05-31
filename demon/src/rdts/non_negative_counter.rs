@@ -98,6 +98,22 @@ impl Operation for NonNegativeCounterOp {
         }
     }
 
+    /// Subtract only generates a shadow op, if the counter value is large enough.
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+        match *self {
+            Self::Read { .. } => Some(self.clone()),
+            Self::Add { .. } => Some(self.clone()),
+            Self::Subtract { key, val } => {
+                if let Some(v) = state.get(&key) {
+                    if *v >= val {
+                        return Some(self.clone())
+                    }
+                }
+                None
+            },
+        }
+    }
+
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
         match *self {
             Self::Read { key } => {
@@ -126,7 +142,7 @@ impl Operation for NonNegativeCounterOp {
         let mut rng = thread_rng();
         let key = rng.gen_range(0..settings.key_range) as Key;
         let read_ops = [Self::Read{key}];
-        let weak_ops = [Self::Add{key, val: 1}];
+        let weak_ops = [Self::Add{key, val: 1000}];
         let strong_ops = [Self::Subtract{key, val: 1}];
         let strong = rng.gen_bool(settings.strong_ratio);
         let read = rng.gen_bool(settings.read_ratio);

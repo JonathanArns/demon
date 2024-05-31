@@ -32,6 +32,8 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     fn is_red(&self) -> bool;
     /// Indicates an ordering restriction in PoR.
     fn is_por_conflicting(&self, other: &Self) -> bool;
+    /// Used to turn client operations into shadow operations.
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self>;
     /// Used to generate benchmark workloads
     fn gen_query(settings: &BenchSettings) -> Self;
 }
