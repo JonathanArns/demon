@@ -34,8 +34,8 @@ pub struct Unistore<O: Operation> {
     next_transaction_id: Arc<Mutex<TransactionId>>,
     quorum_replicated_snapshot: Arc<RwLock<Snapshot>>,
     decided_transaction_count: Arc<RwLock<usize>>,
-    /// Strong client requests wait here for transaction completion.
-    waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<QueryResult<O>>>>>,
+    /// Strong client requests wait here for transaction completion. Includes a retry counter.
+    waiting_transactions: Arc<Mutex<HashMap<TransactionId, (oneshot::Sender<QueryResult<O>>, usize)>>>,
     /// Keeps track of which transactions each replica has seen
     peer_start_ids: Arc<Mutex<Vec<(NodeId, TransactionId)>>>,
     transaction_log: Arc<Mutex<Vec<Transaction<O>>>>,
@@ -135,7 +135,7 @@ impl<O: Operation> Unistore<O> {
                         let snapshot = protocol.snapshot_barrier().await;
                         let transaction = Transaction { id, snapshot, op: Some(query) };
                         let tagged_transaction = TaggedTransaction { t: transaction, start_id: protocol.transaction_log.lock().await.last().map(|x| x.id) };
-                        protocol.waiting_transactions.lock().await.insert(id, result_sender);
+                        protocol.waiting_transactions.lock().await.insert(id, (result_sender, 0));
                         protocol.sequencer.append(tagged_transaction).await;
                     });
                 } else {
@@ -191,11 +191,16 @@ impl<O: Operation> Unistore<O> {
                                 // re-sequence with new id, if a PoR conflict was detected
                                 if !may_commit {
                                     let mut waiting_transactions = proto.waiting_transactions.lock().await;
-                                    if let Some(sender) = waiting_transactions.remove(&transaction.id) {
+                                    if let Some((sender, retry_counter)) = waiting_transactions.remove(&transaction.id) {
+                                        if retry_counter >= 2 {
+                                            // we cancel a transaction after 3 failed commit attempts
+                                            drop(sender);
+                                            continue
+                                        }
                                         let new_id = proto.generate_transaction_id().await;
                                         let new_transaction = Transaction { id: new_id, snapshot: transaction.snapshot.clone(), op: transaction.op.clone() };
                                         let new_tagged_transaction = TaggedTransaction { t: new_transaction, start_id: transaction_log.last().map(|x| x.id) };
-                                        waiting_transactions.insert(new_id, sender);
+                                        waiting_transactions.insert(new_id, (sender, retry_counter + 1));
                                         proto.sequencer.append(new_tagged_transaction).await;
                                     }
                                     continue
@@ -207,7 +212,7 @@ impl<O: Operation> Unistore<O> {
                             transaction_log.push(transaction.clone());
                             let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);
                             let response = proto.storage.exec_red(transaction).await;
-                            if let Some(sender) = result_sender {
+                            if let Some((sender, _retry_counter)) = result_sender {
                                 // this node has a client waiting for this response
                                 sender.send(response).unwrap();
                             }

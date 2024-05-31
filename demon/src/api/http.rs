@@ -130,8 +130,10 @@ async fn run_client<O: Operation>(
         let (result_sender, result_receiver) = oneshot::channel();
         query_sender.send((query, result_sender)).await?;
         select! {
-            _ = result_receiver => {
-                measurements.push(Measurement{latency: start_time.elapsed()});
+            res = result_receiver => {
+                if res.is_ok() {
+                    measurements.push(Measurement{latency: start_time.elapsed()});
+                }
             },
             // request timeout
             _ = tokio::time::sleep(Duration::from_secs(3)) => (),

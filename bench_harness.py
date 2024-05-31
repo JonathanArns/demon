@@ -136,9 +136,12 @@ def run_micro(args):
     """
     This is a helper function to run the microbench with multiprocessing.
     """
-    measurements = requests.post(f"http://{args[1]}/bench", json=args[2]).json()
-    measurements["node_id"] = args[0]
-    return measurements
+    try:
+        measurements = requests.post(f"http://{args[1]}/bench", json=args[2]).json()
+        measurements["node_id"] = args[0]
+        return measurements
+    except Exception:
+        return None
 
 previous_tpcc_settings = None
 def run_bench(bench_config, nodes, silent=False):
@@ -151,82 +154,90 @@ def run_bench(bench_config, nodes, silent=False):
     if not silent:
         print(f"running: {bench_config}")
     reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
-    time.sleep(1)
-    if "micro" == bench_config["type"]:
-        args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"]) for id in bench_config["cluster_config"]["node_ids"]]
-        with Pool(processes=len(args)) as pool:
-            results = pool.map(run_micro, args)
-
-        # record benchmark measurements
-        data = {
-            "total_mean_latency": 0.0,
-            "total_throughput": 0,
-        }
-        for values in results:
-            data["total_throughput"] += values["throughput"]
-            data["total_mean_latency"] += values["mean_latency"]
-            data[f"{values['node_id']}_throughput"] = values["throughput"]
-            data[f"{values['node_id']}_mean_latency"] = values["mean_latency"]
-        data["total_mean_latency"] /= len(results)
-
-        # record benchmark parameters
-        data["datatype"] = bench_config["cluster_config"]["datatype"]
-        data["proto"] = bench_config["cluster_config"]["proto"]
-        data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
-        data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
-        data["read_ratio"] = bench_config["settings"]["read_ratio"]
-        data["read_ratio"] = bench_config["settings"]["read_ratio"]
-        data["duration"] = bench_config["settings"]["duration"]
-        data["num_clients"] = bench_config["settings"]["num_clients"]
-        data["key_range"] = bench_config["settings"]["key_range"]
-
-        return data
-
-    elif "tpcc" == bench_config["type"]:
-        settings = bench_config["settings"]
-        scalefactor = str(settings["scalefactor"])
-        num_clients = str(settings["num_clients"])
-        warehouses = str(settings["warehouses"])
-        duration = str(settings["duration"])
-        command = ["python", "py-tpcc/pytpcc/coordinator.py", "demon",
-                   "--config", "./tpcc_driver.conf",
-                   "--scalefactor", scalefactor,
-                   "--clientprocs", num_clients,
-                   "--warehouses", warehouses,
-                   "--duration", duration]
-        if not reconfigured:
-            if previous_tpcc_settings is not None \
-                and str(previous_tpcc_settings["scalefactor"]) == scalefactor \
-                and str(previous_tpcc_settings["warehouses"]) == warehouses:
-                # we can re-use the data from the previous tpcc run
-                command.append("--no-load")
-            else:
-                # need to re-start the servers to have a clean db
-                stop_servers(bench_config["cluster_config"], nodes)
-                start_servers(bench_config["cluster_config"], nodes)
-        previous_tpcc_settings = copy.deepcopy(settings)
-        with open("./tpcc_driver.conf", 'w') as file:
-            # we assume that the clients are co-located with a db node that they can reach at localhost:80
-            client_ssh = [f"-p {nodes[id]['ssh_port']} {nodes[id]['ssh_user']}@{nodes[id]['ip']}" for id in bench_config["cluster_config"]["node_ids"]]
-            file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(client_ssh)}\npath: /workspace/py-tpcc/pytpcc")
-        result = subprocess.run(command, capture_output=True, text=True)
-
+    while True:
         try:
-            data = json.loads(result.stdout)
-            data["datatype"] = bench_config["cluster_config"]["datatype"]
-            data["proto"] = bench_config["cluster_config"]["proto"]
-            data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
-            data["duration"] = bench_config["settings"]["duration"]
-            data["num_clients"] = bench_config["settings"]["num_clients"]
+            time.sleep(1)
+            if "micro" == bench_config["type"]:
+                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"]) for id in bench_config["cluster_config"]["node_ids"]]
+                with Pool(processes=len(args)) as pool:
+                    results = pool.map(run_micro, args)
+                if None in results:
+                    raise "micro results missing from at least one process"
+
+                # record benchmark measurements
+                data = {
+                    "total_mean_latency": 0.0,
+                    "total_throughput": 0,
+                }
+                for values in results:
+                    data["total_throughput"] += values["throughput"]
+                    data["total_mean_latency"] += values["mean_latency"]
+                    data[f"{values['node_id']}_throughput"] = values["throughput"]
+                    data[f"{values['node_id']}_mean_latency"] = values["mean_latency"]
+                data["total_mean_latency"] /= len(results)
+
+                # record benchmark parameters
+                data["datatype"] = bench_config["cluster_config"]["datatype"]
+                data["proto"] = bench_config["cluster_config"]["proto"]
+                data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
+                data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
+                data["read_ratio"] = bench_config["settings"]["read_ratio"]
+                data["read_ratio"] = bench_config["settings"]["read_ratio"]
+                data["duration"] = bench_config["settings"]["duration"]
+                data["num_clients"] = bench_config["settings"]["num_clients"]
+                data["key_range"] = bench_config["settings"]["key_range"]
+
+                return data
+
+            elif "tpcc" == bench_config["type"]:
+                settings = bench_config["settings"]
+                scalefactor = str(settings["scalefactor"])
+                num_clients = str(settings["num_clients"])
+                warehouses = str(settings["warehouses"])
+                duration = str(settings["duration"])
+                command = ["python", "py-tpcc/pytpcc/coordinator.py", "demon",
+                        "--config", "./tpcc_driver.conf",
+                        "--scalefactor", scalefactor,
+                        "--clientprocs", num_clients,
+                        "--warehouses", warehouses,
+                        "--duration", duration]
+                if not reconfigured:
+                    if previous_tpcc_settings is not None \
+                        and str(previous_tpcc_settings["scalefactor"]) == scalefactor \
+                        and str(previous_tpcc_settings["warehouses"]) == warehouses:
+                        # we can re-use the data from the previous tpcc run
+                        command.append("--no-load")
+                    else:
+                        # need to re-start the servers to have a clean db
+                        stop_servers(bench_config["cluster_config"], nodes)
+                        start_servers(bench_config["cluster_config"], nodes)
+                previous_tpcc_settings = copy.deepcopy(settings)
+                with open("./tpcc_driver.conf", 'w') as file:
+                    # we assume that the clients are co-located with a db node that they can reach at localhost:80
+                    client_ssh = [f"-p {nodes[id]['ssh_port']} {nodes[id]['ssh_user']}@{nodes[id]['ip']}" for id in bench_config["cluster_config"]["node_ids"]]
+                    file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(client_ssh)}\npath: /workspace/py-tpcc/pytpcc")
+                result = subprocess.run(command, capture_output=True, text=True)
+
+                try:
+                    data = json.loads(result.stdout)
+                    data["datatype"] = bench_config["cluster_config"]["datatype"]
+                    data["proto"] = bench_config["cluster_config"]["proto"]
+                    data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
+                    data["duration"] = bench_config["settings"]["duration"]
+                    data["num_clients"] = bench_config["settings"]["num_clients"]
+                except Exception as e:
+                    print(f"couldn't load TPCC results with exception {e}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+                    return None
+
+                return data
+
+            else:
+                print("Bad benchmark type. choose one of: micro, tpcc")
+                return None
         except Exception as e:
-            print(f"couldn't load TPCC results with exception {e}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
-            return None
-
-        return data
-
-    else:
-        print("Bad benchmark type. choose one of: micro, tpcc")
-        return None
+            print(f"retrying bench after exception: {e}")
+            stop_servers(bench_config["cluster_config"], nodes)
+            start_servers(bench_config["cluster_config"], nodes)
 
 current_cluster_config = None
 def ensure_cluster_state(cluster_config, nodes):
