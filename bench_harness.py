@@ -143,6 +143,18 @@ def run_micro(args):
     except Exception:
         return None
 
+def run_tpcc(args):
+    """
+    This is a helper function to run the tpcc bench with multiprocessing.
+    """
+    try:
+        output = requests.post(f"http://{args[1]}/run_cmd", json=args[2]).json()
+        output["node_id"] = args[0]
+        return output
+    except Exception as e:
+        print(e)
+        return None
+
 previous_tpcc_settings = None
 def run_bench(bench_config, nodes, silent=False):
     """
@@ -162,7 +174,7 @@ def run_bench(bench_config, nodes, silent=False):
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_micro, args)
                 if None in results:
-                    raise "micro results missing from at least one process"
+                    raise Exception("micro results missing from at least one process")
 
                 # record benchmark measurements
                 data = {
@@ -195,40 +207,57 @@ def run_bench(bench_config, nodes, silent=False):
                 num_clients = str(settings["num_clients"])
                 warehouses = str(settings["warehouses"])
                 duration = str(settings["duration"])
-                command = ["python", "py-tpcc/pytpcc/coordinator.py", "demon",
-                        "--config", "./tpcc_driver.conf",
+                command = ["python", "/workspace/py-tpcc/pytpcc/tpcc.py", "demon",
+                        "--config", "/workspace/demon_driver.conf",
                         "--scalefactor", scalefactor,
-                        "--clientprocs", num_clients,
+                        "--clients", num_clients,
                         "--warehouses", warehouses,
                         "--duration", duration]
+
+                load = True
                 if not reconfigured:
                     if previous_tpcc_settings is not None \
                         and str(previous_tpcc_settings["scalefactor"]) == scalefactor \
                         and str(previous_tpcc_settings["warehouses"]) == warehouses:
                         # we can re-use the data from the previous tpcc run
-                        command.append("--no-load")
+                        load = False
                     else:
                         # need to re-start the servers to have a clean db
                         stop_servers(bench_config["cluster_config"], nodes)
                         start_servers(bench_config["cluster_config"], nodes)
                 previous_tpcc_settings = copy.deepcopy(settings)
-                with open("./tpcc_driver.conf", 'w') as file:
-                    # we assume that the clients are co-located with a db node that they can reach at localhost:80
-                    client_ssh = [f"-p {nodes[id]['ssh_port']} {nodes[id]['ssh_user']}@{nodes[id]['ip']}" for id in bench_config["cluster_config"]["node_ids"]]
-                    file.write(f"[demon]\nhost: localhost\nport: 80\nclients: {','.join(client_ssh)}\npath: /workspace/py-tpcc/pytpcc")
-                result = subprocess.run(command, capture_output=True, text=True)
 
-                try:
-                    data = json.loads(result.stdout)
-                    data["datatype"] = bench_config["cluster_config"]["datatype"]
-                    data["proto"] = bench_config["cluster_config"]["proto"]
-                    data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
-                    data["duration"] = bench_config["settings"]["duration"]
-                    data["num_clients"] = bench_config["settings"]["num_clients"]
-                except Exception as e:
-                    print(f"couldn't load TPCC results with exception {e}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
-                    return None
+                if load:
+                    if not silent:
+                        print("loading tpcc data")
+                    node = nodes[bench_config["cluster_config"]["node_ids"][0]]
+                    requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json={"cmd": " ".join(command + ["--no-execute"])}).json()
+                else:
+                    if not silent:
+                        print("skipped loading tpcc data")
 
+                # now execute in threadpool
+                print("executing tpcc bench")
+                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['control_port']}", {"cmd": " ".join(command + ["--no-load"])}) for id in bench_config["cluster_config"]["node_ids"]]
+                with Pool(processes=len(args)) as pool:
+                    results = pool.map(run_tpcc, args)
+                if None in results:
+                    raise Exception("tpcc results missing from at least one process")
+
+                data = {}
+                data["datatype"] = bench_config["cluster_config"]["datatype"]
+                data["proto"] = bench_config["cluster_config"]["proto"]
+                data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
+                data["duration"] = bench_config["settings"]["duration"]
+                data["num_clients"] = bench_config["settings"]["num_clients"]
+                for result in results:
+                    try:
+                        node_id = result["node_id"]
+                        replica_data = json.loads(result['std_out'])
+                        for key, val in replica_data.items():
+                            data[f"{node_id}_{key}"] = val
+                    except Exception as e:
+                        raise Exception(f"couldn't load TPCC results with exception {e}\nSTDOUT:\n{result['std_out']}\nSTDERR:\n{result['std_err']}")
                 return data
 
             else:
@@ -238,6 +267,7 @@ def run_bench(bench_config, nodes, silent=False):
             print(f"retrying bench after exception: {e}")
             stop_servers(bench_config["cluster_config"], nodes)
             start_servers(bench_config["cluster_config"], nodes)
+            reconfigured = True
 
 current_cluster_config = None
 def ensure_cluster_state(cluster_config, nodes):

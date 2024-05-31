@@ -5,7 +5,16 @@ import pandas as pd
 
 
 def plot_tpcc(df, dir_path):
-    pass
+    protocols = df["proto"].unique()
+    plt.figure(figsize=(10, 6))  # Adjust size as needed
+    for proto in protocols:
+        proto_df = df[df["proto"] == proto]
+        plt.plot(proto_df["total_throughput"], proto_df["total_mean_latency"], marker="o", label=proto)
+    plt.xlabel("throughput (ops/s)")
+    plt.ylabel("mean latency (ms)")
+    plt.title(f"TPCC latency by throughput")
+    plt.legend()
+    plt.savefig(os.path.join(dir_path, f"tpcc_plot.png"), dpi=300)
 
 def plot_micro(df, dir_path):
     datatypes = df["datatype"].unique()

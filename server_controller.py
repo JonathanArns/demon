@@ -58,8 +58,8 @@ def run_cmd():
         return jsonify({"error": str(e)}), 400
 
     try:
-        subprocess.run(cmd)
-        return jsonify({"message": "success"}), 200
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return jsonify({"message": "success", "std_out": output.stdout, "std_err": output.stderr}), 200
     except Exception as e:
         print(e, file=sys.stderr)
         return jsonify({"error": str(e)}), 500

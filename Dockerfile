@@ -18,20 +18,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id="reg-${TARGETPLATFORM
 # our final base
 FROM python:3.11-slim-bookworm 
 
-RUN apt-get update && apt-get install -y openssh-server ca-certificates libssl-dev iproute2 && rm -rf /var/lib/apt/lists/*
-RUN pip install flask execnet requests
+RUN apt-get update && apt-get install -y ca-certificates libssl-dev iproute2 && rm -rf /var/lib/apt/lists/*
+RUN pip install flask requests
 
-# setup ssh server for distributed tpcc
-RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-RUN sed -i 's/\#Port 22/Port 2200/g' /etc/ssh/sshd_config
-RUN useradd -m -s /bin/bash jonathan
-RUN mkdir /home/jonathan/.ssh
-RUN echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINPmhm+I1a07tMT51Vol6xMkQ03sfnEv+yNoTH/K5n5h jarns@kth.se" > /home/jonathan/.ssh/authorized_keys
-RUN chown -R jonathan /home/jonathan/.ssh/
-RUN chmod 600 /home/jonathan/.ssh/authorized_keys
 COPY ./py-tpcc /workspace/py-tpcc
+RUN echo "[demon]\nhost: localhost\nport: 80" > /workspace/demon_driver.conf
 
 COPY ./server_controller.py ./server_controller.py
 COPY --from=build /workspace/bin/demon /usr/local/bin/demon
 
-ENTRYPOINT /bin/sh -c "service ssh start && python server_controller.py" 
+ENTRYPOINT /bin/sh -c "python server_controller.py" 
