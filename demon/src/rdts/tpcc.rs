@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+use tokio::time::Instant;
 
 use super::Operation;
 
@@ -41,7 +42,7 @@ pub struct ByWarehouse {
     /// (no_w_id, no_d_id) -> no_o_id
     new_order_index: HashMap<u8, VecDeque<usize>>,
     /// (ol_w_id,ol_d_id,ol_o_id,ol_number) -> OrderLine
-    order_lines: HashMap<(u8, usize, usize), OrderLine>,
+    order_lines: HashMap<(u8, usize), Vec<OrderLine>>,
     /// History
     history: Vec<History>,
     /// (c_w_id, c_d_id, c_id) -> Customer
@@ -127,6 +128,7 @@ pub struct Item {
     i_name: String,
     i_price: f64,
     i_data: String,
+    i_original: bool,
 }
 
 // CREATE TABLE ITEM (
@@ -198,7 +200,7 @@ pub struct History {
     h_c_w_id: u16,
     h_d_id: u8,
     h_w_id: u16,
-    h_date: String,
+    h_date: u64, // timestamp
     h_amount: f64,
     h_data: String,
 }
@@ -235,6 +237,7 @@ pub struct Stock {
     s_order_cnt: usize,
     s_remote_cnt: usize,
     s_data: String,
+    s_original: bool,
 }
 
 // CREATE TABLE STOCK (
@@ -264,7 +267,7 @@ pub struct Order {
     o_c_id: usize,
     o_d_id: u8,
     o_w_id: u16,
-    o_entry_d: String,
+    o_entry_d: u64, // timestamp
     o_carrier_id: usize,
     o_ol_cnt: usize,
     o_all_local: usize,
@@ -308,7 +311,7 @@ pub struct OrderLine {
     ol_number: usize,
     ol_i_id: usize,
     ol_supply_w_id: u16,
-    ol_delivery_d: String,
+    ol_delivery_d: Option<u64>, // timestamp
     ol_quantity: usize,
     ol_amount: f64,
     ol_dist_info: String,
@@ -342,13 +345,13 @@ pub enum TpccOp {
     Delivery{
         w_id: u16,
         o_carrier_id: usize,
-        ol_delivery_d: String,
+        ol_delivery_d: u64, // timestamp
     },
     NewOrder{
         w_id: u16,
         d_id: u8,
         c_id: usize,
-        o_entry_d: String,
+        o_entry_d: u64, // timestamp
         i_ids: Vec<usize>,
         i_w_ids: Vec<u16>,
         i_qtys: Vec<usize>,
@@ -367,7 +370,7 @@ pub enum TpccOp {
         c_d_id: u8,
         c_id: Option<usize>,
         c_last: String,
-        h_date: String,
+        h_date: u64, // timestamp
     },
     StockLevel{
         w_id: u16,
@@ -570,7 +573,7 @@ impl Operation for TpccOp {
                             let i_name: String = values.next().unwrap().parse().unwrap();
                             let i_price: f64 = values.next().unwrap().parse().unwrap();
                             let i_data: String = values.next().unwrap().parse().unwrap();
-                            let val = Item{i_id, i_im_id, i_name, i_price, i_data};
+                            let val = Item{i_id, i_im_id, i_name, i_price, i_original: i_data.contains("ORIGINAL"), i_data};
                             state.items.insert(i_id, val);
                         }
                     },
@@ -615,7 +618,7 @@ impl Operation for TpccOp {
                             let h_c_w_id: u16 = values.next().unwrap().parse().unwrap();
                             let h_d_id: u8 = values.next().unwrap().parse().unwrap();
                             let h_w_id: u16 = values.next().unwrap().parse().unwrap();
-                            let h_date: String = values.next().unwrap().parse().unwrap();
+                            let h_date: u64 = values.next().unwrap().parse().unwrap();
                             let h_amount: f64 = values.next().unwrap().parse().unwrap();
                             let h_data: String = values.next().unwrap().parse().unwrap();
                             let val = History{h_c_id, h_c_d_id, h_c_w_id, h_d_id, h_w_id, h_date, h_amount, h_data};
@@ -642,7 +645,7 @@ impl Operation for TpccOp {
                             let s_order_cnt: usize = values.next().unwrap().parse().unwrap();
                             let s_remote_cnt: usize = values.next().unwrap().parse().unwrap();
                             let s_data: String = values.next().unwrap().parse().unwrap();
-                            let val = Stock{s_i_id, s_w_id, s_quantity, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10, s_ytd, s_order_cnt, s_remote_cnt, s_data};
+                            let val = Stock{s_i_id, s_w_id, s_quantity, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10, s_ytd, s_order_cnt, s_remote_cnt, s_original: s_data.contains("ORIGINAL"), s_data};
                             state.stock.insert((s_w_id, s_i_id), val);
                         }
                     },
@@ -653,7 +656,7 @@ impl Operation for TpccOp {
                             let o_c_id: usize = values.next().unwrap().parse().unwrap();
                             let o_d_id: u8 = values.next().unwrap().parse().unwrap();
                             let o_w_id: u16 = values.next().unwrap().parse().unwrap();
-                            let o_entry_d: String = values.next().unwrap().parse().unwrap();
+                            let o_entry_d: u64 = values.next().unwrap().parse().unwrap();
                             let o_carrier_id: usize = values.next().unwrap().parse().unwrap();
                             let o_ol_cnt: usize = values.next().unwrap().parse().unwrap();
                             let o_all_local: usize = values.next().unwrap().parse().unwrap();
@@ -688,12 +691,15 @@ impl Operation for TpccOp {
                             let ol_number: usize = values.next().unwrap().parse().unwrap();
                             let ol_i_id: usize = values.next().unwrap().parse().unwrap();
                             let ol_supply_w_id: u16 = values.next().unwrap().parse().unwrap();
-                            let ol_delivery_d: String = values.next().unwrap().parse().unwrap();
+                            let ol_delivery_d: Option<u64> = if let Ok(val) = values.next().unwrap().parse::<u64>() { Some(val) } else { None };
                             let ol_quantity: usize = values.next().unwrap().parse().unwrap();
                             let ol_amount: f64 = values.next().unwrap().parse().unwrap();
                             let ol_dist_info: String = values.next().unwrap().parse().unwrap();
                             let val = OrderLine{ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_delivery_d, ol_quantity, ol_amount, ol_dist_info};
-                            state.wh_mut(&ol_w_id).order_lines.insert((ol_d_id, ol_o_id, ol_number), val);
+                            if !state.wh(&ol_w_id).order_lines.contains_key(&(ol_d_id, ol_o_id)) {
+                                state.wh_mut(&ol_w_id).order_lines.insert((ol_d_id, ol_o_id), vec![]);
+                            }
+                            state.wh_mut(&ol_w_id).order_lines.get_mut(&(ol_d_id, ol_o_id)).unwrap().push(val);
                         }
                     },
                     _ => unreachable!("bad table name: {:?}", table),
@@ -705,6 +711,7 @@ impl Operation for TpccOp {
                 o_carrier_id,
                 ol_delivery_d,
             } => {
+                let start_time = Instant::now();
                 for d_id in 1..=10 {
                     if let Some(o_ids) = state.wh_mut(w_id).new_order_index.get_mut(&d_id) {
                         if o_ids.is_empty() {
@@ -715,11 +722,9 @@ impl Operation for TpccOp {
                         let order = state.wh_mut(w_id).orders.get_mut(&(d_id, o_id)).unwrap();
                         order.o_carrier_id = *o_carrier_id;
                         let o_c_id = order.o_c_id;
-                        let ol_total = state.wh_mut(w_id).order_lines.iter_mut().filter(|(key, _ol)| {
-                            key.0 == d_id && key.1 == o_id
-                        }).map(|(_, ol)| {
+                        let ol_total = state.wh_mut(w_id).order_lines.get_mut(&(d_id, o_id)).unwrap().iter_mut().map(|ol| {
                             // update OL
-                            ol.ol_delivery_d = ol_delivery_d.to_owned();
+                            ol.ol_delivery_d = Some(*ol_delivery_d);
                             // and return amount
                             ol.ol_amount
                         }).sum::<f64>();
@@ -727,6 +732,7 @@ impl Operation for TpccOp {
                         customer.c_balance += ol_total;
                     }
                 }
+                println!("Delivery {:?}", start_time.elapsed());
                 None
             },
             Self::NewOrder{
@@ -738,6 +744,7 @@ impl Operation for TpccOp {
                 i_w_ids,
                 i_qtys,
             } => {
+                let start_time = Instant::now();
                 let mut all_local = true;
                 let mut items = vec![];
                 for i in 0..i_ids.len() {
@@ -766,7 +773,7 @@ impl Operation for TpccOp {
                     o_c_id: *c_id,
                     o_d_id: *d_id,
                     o_w_id: *w_id,
-                    o_entry_d: o_entry_d.to_owned(),
+                    o_entry_d: *o_entry_d,
                     o_carrier_id,
                     o_ol_cnt,
                     o_all_local: all_local as usize,
@@ -779,6 +786,7 @@ impl Operation for TpccOp {
                 state.wh_mut(w_id).new_order_index.get_mut(&(*d_id)).unwrap().push_back(d_next_o_id);
 
                 let mut total = 0.0;
+                let mut order_lines = vec![];
                 for i in 0..i_ids.len() {
                     let ol_number = i + 1;
                     let ol_supply_w_id = i_w_ids[i];
@@ -817,7 +825,7 @@ impl Operation for TpccOp {
                         stock_info.s_remote_cnt += 1;
                     }
 
-                    let brand_generic = if i_info.i_data.contains("ORIGINAL") && stock_info.s_data.contains("ORIGINAL") {
+                    let brand_generic = if i_info.i_original && stock_info.s_original {
                         "B".to_string()
                     } else {
                         "G".to_string()
@@ -826,13 +834,15 @@ impl Operation for TpccOp {
                     let ol_amount = ol_quantity as f64 * i_info.i_price;
                     total += ol_amount;
 
-                    state.wh_mut(w_id).order_lines.insert(
-                        (*d_id, d_next_o_id, ol_number),
-                        OrderLine { ol_o_id: d_next_o_id, ol_d_id: *d_id, ol_w_id: *w_id, ol_number, ol_i_id, ol_supply_w_id, ol_delivery_d: o_entry_d.to_owned(), ol_quantity, ol_amount, ol_dist_info: s_dist_xx },
+                    order_lines.push(
+                        OrderLine { ol_o_id: d_next_o_id, ol_d_id: *d_id, ol_w_id: *w_id, ol_number, ol_i_id, ol_supply_w_id, ol_delivery_d: None, ol_quantity, ol_amount, ol_dist_info: s_dist_xx },
                     );
                 }
+                state.wh_mut(w_id).order_lines.insert((*d_id, d_next_o_id), order_lines);
+
                 // TODO: return item_data and total
                 total *= (1.0 - c_discount) * (1.0 + w_tax + d_tax);
+                println!("NewOrder {:?}    {:?} items", start_time.elapsed(), i_ids.len());
                 None
             },
             Self::OrderStatus{
@@ -841,6 +851,7 @@ impl Operation for TpccOp {
                 c_id,
                 c_last,
             } => {
+                let start_time = Instant::now();
                 let customer = if let Some(c_id) = c_id {
                     state.wh(w_id).customers.get(&(*d_id, *c_id)).unwrap()
                 } else {
@@ -850,13 +861,12 @@ impl Operation for TpccOp {
                     .filter(|o| o.o_d_id == *d_id && o.o_c_id == customer.c_id)
                     .max_by_key(|o| o.o_id);
                 let order_lines = if let Some(order) = order {
-                    state.wh(w_id).order_lines.values()
-                        .filter(|ol| ol.ol_d_id == *d_id && ol.ol_o_id == order.o_id)
-                        .collect()
+                    state.wh(w_id).order_lines.get(&(*d_id, order.o_id)).unwrap().clone()
                 } else {
                     vec![]
                 };
                 // TODO: return actual data
+                println!("OrderStatus {:?}", start_time.elapsed());
                 None
             },
             Self::Payment{
@@ -869,6 +879,7 @@ impl Operation for TpccOp {
                 c_last,
                 h_date,
             } => {
+                let start_time = Instant::now();
                 let customer = if let Some(c_id) = c_id {
                     state.wh_mut(w_id).customers.get_mut(&(*d_id, *c_id)).unwrap()
                 } else {
@@ -902,10 +913,11 @@ impl Operation for TpccOp {
                     h_w_id: *w_id,
                     h_d_id: *d_id,
                     h_amount: *h_amount,
-                    h_date: h_date.to_owned(),
+                    h_date: *h_date,
                     h_data: format!("{}    {}", w_name, d_name),
                 });
 
+                println!("Payment {:?}", start_time.elapsed());
                 None
             },
             Self::StockLevel{
@@ -913,19 +925,23 @@ impl Operation for TpccOp {
                 d_id,
                 threshold,
             } => {
+                let start_time = Instant::now();
                 let district = state.wh(w_id).districts.get(d_id).unwrap();
                 let o_id = district.d_next_o_id;
-                let item_ids = state.wh(w_id).order_lines.values().filter_map(|ol| {
-                    if ol.ol_d_id == *d_id && ol.ol_o_id < o_id && ol.ol_o_id >= o_id - 20 {
-                        Some(ol.ol_i_id)
-                    } else {
-                        None
-                    }
+                let item_ids = state.wh(w_id).order_lines.values().flat_map(|order_lines| {
+                    order_lines.iter().filter_map(|ol| {
+                        if ol.ol_d_id == *d_id && ol.ol_o_id < o_id && ol.ol_o_id >= o_id - 20 {
+                            Some(ol.ol_i_id)
+                        } else {
+                            None
+                        }
+                    })
                 }).collect::<Vec<_>>();
                 let result = state.stock.values().filter(|s| {
                     s.s_w_id == *w_id && s.s_quantity < *threshold && item_ids.contains(&s.s_i_id)
                 }).map(|s| s.s_i_id).collect::<HashSet<_>>().len();
                 // TODO: return result
+                println!("StockLevel {:?}", start_time.elapsed());
                 None
             },
         }
