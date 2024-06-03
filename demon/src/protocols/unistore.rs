@@ -20,6 +20,7 @@ struct TaggedTransaction<O> {
     t: Transaction<O>,
     /// May not conflict with any transaction between this one and itself
     start_id: Option<TransactionId>,
+    original_query: O,
 }
 
 impl<O: Operation> Entry for TaggedTransaction<O> {
@@ -105,12 +106,10 @@ impl<O: Operation> Unistore<O> {
     /// Chooses the snapshot for the next transaction proposed at this node
     /// and waits until that snapshot is quorum replicated.
     /// This is required in RedBlue and PoR for liveness and causality.
-    async fn snapshot_barrier(&self) -> Snapshot {
-        let snapshot = self.storage.get_current_snapshot().await;
+    async fn snapshot_barrier(&self, snapshot: &Snapshot) {
         while snapshot.greater(&*self.quorum_replicated_snapshot.read().await) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        snapshot
     }
 
     /// Process events from the components.
@@ -131,23 +130,32 @@ impl<O: Operation> Unistore<O> {
                     // strong operation
                     let protocol = proto.clone();
                     tokio::spawn(async move {
-                        let id = protocol.generate_transaction_id().await;
-                        let snapshot = protocol.snapshot_barrier().await;
-                        let transaction = Transaction { id, snapshot, op: Some(query) };
-                        let tagged_transaction = TaggedTransaction { t: transaction, start_id: protocol.transaction_log.lock().await.last().map(|x| x.id) };
-                        protocol.waiting_transactions.lock().await.insert(id, (result_sender, 0));
-                        protocol.sequencer.append(tagged_transaction).await;
+                        let start_id = protocol.transaction_log.lock().await.last().map(|x| x.id);
+                        if let Some((shadow, snapshot)) = protocol.storage.generate_shadow(query.clone()).await {
+                            let id = protocol.generate_transaction_id().await;
+                            protocol.snapshot_barrier(&snapshot).await;
+                            let transaction = Transaction { id, snapshot, op: Some(shadow) };
+                            let tagged_transaction = TaggedTransaction { t: transaction, start_id, original_query: query };
+                            protocol.waiting_transactions.lock().await.insert(id, (result_sender, 0));
+                            protocol.sequencer.append(tagged_transaction).await;
+                        } else {
+                            let _ = result_sender.send(QueryResult { value: None });
+                        }
                     });
                 } else {
                     // weak operation
-                    let result = proto.storage.exec_blue(query.clone(), my_id).await;
-                    let _ = result_sender.send(result);
-                    if query.is_writing() {
-                        let tagged_op = TaggedWeakOp {
-                            op: query,
-                            transaction_count: *proto.decided_transaction_count.read().await,
-                        };
-                        proto.weak_replication.replicate(tagged_op).await;
+                    if let Some((shadow, _)) = proto.storage.generate_shadow(query).await {
+                        let result = proto.storage.exec_blue(shadow.clone(), my_id).await;
+                        let _ = result_sender.send(result);
+                        if shadow.is_writing() {
+                            let tagged_op = TaggedWeakOp {
+                                op: shadow,
+                                transaction_count: *proto.decided_transaction_count.read().await,
+                            };
+                            proto.weak_replication.replicate(tagged_op).await;
+                        }
+                    } else {
+                        let _ = result_sender.send(QueryResult { value: None });
                     }
                 }
             }
@@ -197,11 +205,23 @@ impl<O: Operation> Unistore<O> {
                                             drop(sender);
                                             continue
                                         }
-                                        let new_id = proto.generate_transaction_id().await;
-                                        let new_transaction = Transaction { id: new_id, snapshot: transaction.snapshot.clone(), op: transaction.op.clone() };
-                                        let new_tagged_transaction = TaggedTransaction { t: new_transaction, start_id: transaction_log.last().map(|x| x.id) };
-                                        waiting_transactions.insert(new_id, (sender, retry_counter + 1));
-                                        proto.sequencer.append(new_tagged_transaction).await;
+                                        
+                                        // generate shadow again
+                                        let protocol = proto.clone();
+                                        let start_id = transaction_log.last().map(|x| x.id);
+                                        if let Some((shadow, snapshot)) = protocol.storage.generate_shadow(tagged_transaction.original_query.clone()).await {
+                                            let new_id = protocol.generate_transaction_id().await;
+                                            waiting_transactions.insert(new_id, (sender, retry_counter + 1));
+                                            tokio::spawn(async move {
+                                                protocol.snapshot_barrier(&snapshot).await;
+                                                let new_transaction = Transaction { id: new_id, snapshot, op: Some(shadow) };
+                                                let new_tagged_transaction = TaggedTransaction { t: new_transaction, start_id, original_query: tagged_transaction.original_query };
+                                                protocol.sequencer.append(new_tagged_transaction).await;
+                                            });
+                                        } else {
+                                            let _ = sender.send(QueryResult { value: None });
+                                        }
+
                                     }
                                     continue
                                 }
