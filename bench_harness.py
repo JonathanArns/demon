@@ -250,7 +250,7 @@ def run_bench(bench_config, nodes, silent=False):
                 data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
                 data["duration"] = bench_config["settings"]["duration"]
                 data["num_clients"] = bench_config["settings"]["num_clients"]
-                data["total_throughput"] = 0.0
+                data["total_throughput"] = 0
                 data["total_mean_latency"] = 0.0
                 data["total_count"] = 0
                 data["total_time"] = 0.0
@@ -258,10 +258,10 @@ def run_bench(bench_config, nodes, silent=False):
                     try:
                         node_id = result["node_id"]
                         replica_data = json.loads(result['std_out'])
-                        data["total_throughput"] += result["total_throughput"]
-                        data["total_mean_latency"] += result["total_mean_latency"]
-                        data["total_count"] += result["total_count"]
-                        data["total_time"] += result["total_time"]
+                        data["total_throughput"] += replica_data["total_throughput"]
+                        data["total_mean_latency"] += replica_data["total_mean_latency"]
+                        data["total_count"] += replica_data["total_count"]
+                        data["total_time"] += replica_data["total_time"]
                         for key, val in replica_data.items():
                             data[f"{node_id}_{key}"] = val
                     except Exception as e:
