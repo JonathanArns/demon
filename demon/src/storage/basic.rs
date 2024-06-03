@@ -21,4 +21,9 @@ impl<O: Operation> Storage<O> {
         let output = op.apply(&mut *self.state.write().await);
         QueryResult{ value: output }
     }
+
+    /// Generates the shadow op for `op` on the current state.
+    pub async fn generate_shadow(&self, op: O) -> Option<O> {
+        op.generate_shadow(&*self.state.read().await)
+    }
 }

@@ -1,13 +1,13 @@
 use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::{self, Receiver}, oneshot, Mutex}};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{Component, Message};
 
 #[derive(Serialize, Deserialize, Clone)]
-enum RedBlueOp<O> {
+enum ShadowOp<O> {
     Blue(O),
     Red {
         op: O,
@@ -24,7 +24,7 @@ pub struct Gemini<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     // sequencer: Sequencer<Transaction<O>>,
-    weak_replication: WeakReplication<RedBlueOp<O>>,
+    weak_replication: WeakReplication<ShadowOp<O>>,
     /// is Some(seq), if this replica holds the unique red token
     next_red_sequence: Arc<Mutex<Option<usize>>>,
     /// Strong client requests wait here for transaction completion.
@@ -47,7 +47,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
                 tokio::task::spawn(Self::forward_token_after_duration(
                     self.next_red_sequence.clone(),
                     self.network.clone(),
-                    Duration::from_millis(1)
+                    Duration::from_millis(5)
                 ));
             }
         }
@@ -90,15 +90,28 @@ impl<O: Operation> Gemini<O> {
     }
 
     /// Generates a new globally unique transaction Id.
-    async fn generate_red_seq(&self) -> usize {
+    /// Only returns once all previous red shadow ops are applied.
+    async fn sequence_red(&self, op: O) -> Option<(usize, ShadowOp<O>)> {
+        let id;
         loop {
             let mut latch = self.next_red_sequence.lock().await;
             if let Some(ref mut seq) = *latch {
-                let id = *seq;
-                *seq += 1;
-                return id
+                let (applied, _) = *self.waiting_red_ops.lock().await;
+                if applied == *seq {
+                    // now we are allowed to process red ops locally
+                    if let Some(shadow) = self.storage.generate_shadow(op).await {
+                        id = *seq;
+                        *seq += 1;
+                        return Some((id, ShadowOp::Red {
+                            seq: id,
+                            op: shadow,
+                        }))
+                    } else {
+                        return None
+                    }
+                }
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
 
@@ -119,8 +132,8 @@ impl<O: Operation> Gemini<O> {
     }
 
     /// Queues a sequenced red operation for execution
-    async fn process_red_op(&self, rbop: RedBlueOp<O>) {
-        if let RedBlueOp::Red {op, seq} = rbop {
+    async fn process_red_shadow_op(&self, rbop: ShadowOp<O>) {
+        if let ShadowOp::Red {op, seq} = rbop {
             let mut clients = self.waiting_red_clients.lock().await;
             let mut latch = self.waiting_red_ops.lock().await;
             latch.1.insert(seq, op);
@@ -140,33 +153,44 @@ impl<O: Operation> Gemini<O> {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut weak_replication_events: Receiver<WeakEvent<RedBlueOp<O>>>,
+        mut weak_replication_events: Receiver<WeakEvent<ShadowOp<O>>>,
         api: Box<dyn API<O>>,
     ) {
+        let (red_sender, mut red_receiver) = mpsc::channel(8000);
         let mut api_events = api.start(self.network.clone()).await;
         let proto = self.clone();
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_red() {
-                    // strong operation
-                    let protocol = proto.clone();
-                    tokio::spawn(async move {
-                        // wait here until we hold red token
-                        let id = protocol.generate_red_seq().await;
-                        let tagged_op = RedBlueOp::Red { op: query, seq: id };
-                        protocol.waiting_red_clients.lock().await.insert(id, result_sender);
-                        protocol.weak_replication.replicate(tagged_op.clone()).await;
-                        protocol.process_red_op(tagged_op).await;
-                    });
+                    red_sender.send((query, result_sender)).await.unwrap();
                 } else {
                     // weak operation
-                    let result = proto.storage.exec(query.clone()).await;
+                    let shadow = proto.storage.generate_shadow(query).await;
+                    let result = if let Some(op) = shadow {
+                        if op.is_writing() {
+                            let tagged_op = ShadowOp::Blue(op.clone());
+                            proto.weak_replication.replicate(tagged_op).await;
+                        }
+                        proto.storage.exec(op).await
+                    } else {
+                        QueryResult { value: None }
+                    };
                     let _ = result_sender.send(result);
-                    if query.is_writing() {
-                        let tagged_op = RedBlueOp::Blue(query);
-                        proto.weak_replication.replicate(tagged_op).await;
-                    }
+                }
+            }
+        });
+        let proto = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let (query, result_sender) = red_receiver.recv().await.unwrap();
+                // wait here until we hold red token
+                if let Some((seq, shadow)) = proto.sequence_red(query).await {
+                    proto.waiting_red_clients.lock().await.insert(seq, result_sender);
+                    proto.weak_replication.replicate(shadow.clone()).await;
+                    proto.process_red_shadow_op(shadow).await;
+                } else {
+                    let _ = result_sender.send(QueryResult { value: None });
                 }
             }
         });
@@ -178,11 +202,11 @@ impl<O: Operation> Gemini<O> {
                     WeakEvent::QuorumReplicated(_snapshot) => (),
                     WeakEvent::Deliver(new_op) => {
                         match new_op.value {
-                            RedBlueOp::Blue(op) => {
+                            ShadowOp::Blue(op) => {
                                 proto.storage.exec(op).await;
                             },
-                            RedBlueOp::Red { .. } => {
-                                proto.process_red_op(new_op.value).await;
+                            ShadowOp::Red { .. } => {
+                                proto.process_red_shadow_op(new_op.value).await;
                             },
                         }
                     },
