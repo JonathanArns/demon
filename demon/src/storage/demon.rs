@@ -135,4 +135,9 @@ impl<O: Operation> Storage<O> {
 
         QueryResult{ value: output }
     }
+
+    /// Generates the shadow op for `op` on the current state.
+    pub async fn generate_shadow(&self, op: O) -> Option<O> {
+        op.generate_shadow(&*self.latest_weak_snapshot_state.read().await)
+    }
 }

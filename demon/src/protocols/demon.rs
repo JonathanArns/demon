@@ -102,10 +102,17 @@ impl<O: Operation> DeMon<O> {
                     demon.sequencer.append(transaction).await;
                 } else {
                     // weak operation
-                    let result = demon.storage.exec_weak_query(query.clone(), my_id).await;
-                    let _ = result_sender.send(result);
                     if query.is_writing() {
-                        demon.weak_replication.replicate(query).await;
+                        if let Some(shadow) = demon.storage.generate_shadow(query).await {
+                            let result = demon.storage.exec_weak_query(shadow.clone(), my_id).await;
+                            let _ = result_sender.send(result);
+                            demon.weak_replication.replicate(shadow).await;
+                        } else {
+                            let _ = result_sender.send(QueryResult { value: None });
+                        }
+                    } else {
+                        let result = demon.storage.exec_weak_query(query, my_id).await;
+                        let _ = result_sender.send(result);
                     }
                 }
             }
