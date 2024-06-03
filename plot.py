@@ -9,8 +9,8 @@ def plot_tpcc(df, dir_path):
     plt.figure(figsize=(10, 6))  # Adjust size as needed
     for proto in protocols:
         proto_df = df[df["proto"] == proto]
-        plt.plot(proto_df["total_throughput"], proto_df["total_mean_latency"], marker="o", label=proto)
-    plt.xlabel("throughput (ops/s)")
+        plt.plot(proto_df["total_throughput"] * proto_df["num_clients"], proto_df["total_mean_latency"], marker="o", label=proto)
+    plt.xlabel("throughput (txns/s)")
     plt.ylabel("mean latency (ms)")
     plt.title(f"TPCC latency by throughput")
     plt.legend()
@@ -75,8 +75,8 @@ if __name__ == "__main__":
     try:
         plot_micro(pd.read_csv(os.path.join(path, "micro_bench.csv")), path)
     except Exception as e:
-        print(e)
+        print(f"err: {e}")
     try:
         plot_tpcc(pd.read_csv(os.path.join(path, "tpcc.csv")), path)
     except Exception as e:
-        print(e)
+        print(f"err: {e}")

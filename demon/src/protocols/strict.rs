@@ -73,11 +73,16 @@ impl<O: Operation> Strict<O> {
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
-                let id = proto.generate_transaction_id().await;
-                let snapshot = Snapshot::new(&[]); // dummy snapshot, because we don't need it
-                let transaction = Transaction { id, snapshot, op: Some(query) };
-                proto.waiting_transactions.lock().await.insert(id, result_sender);
-                proto.sequencer.append(transaction).await;
+                if query.is_writing() {
+                    let id = proto.generate_transaction_id().await;
+                    let snapshot = Snapshot::new(&[]); // dummy snapshot, because we don't need it
+                    let transaction = Transaction { id, snapshot, op: Some(query) };
+                    proto.waiting_transactions.lock().await.insert(id, result_sender);
+                    proto.sequencer.append(transaction).await;
+                } else {
+                    let response = proto.storage.exec(query).await;
+                    let _ = result_sender.send(response);
+                }
             }
         });
         let proto = self.clone();
