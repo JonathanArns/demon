@@ -137,7 +137,7 @@ def run_micro(args):
     This is a helper function to run the microbench with multiprocessing.
     """
     try:
-        measurements = requests.post(f"http://{args[1]}/bench", json=args[2]).json()
+        measurements = requests.post(f"http://{args[1]}/bench", json=args[2], timeout=args[3]).json()
         measurements["node_id"] = args[0]
         return measurements
     except Exception:
@@ -148,7 +148,7 @@ def run_tpcc(args):
     This is a helper function to run the tpcc bench with multiprocessing.
     """
     try:
-        output = requests.post(f"http://{args[1]}/run_cmd", json=args[2]).json()
+        output = requests.post(f"http://{args[1]}/run_cmd", json=args[2], timeout=args[3]).json()
         output["node_id"] = args[0]
         return output
     except Exception as e:
@@ -170,7 +170,7 @@ def run_bench(bench_config, nodes, silent=False):
         try:
             time.sleep(1)
             if "micro" == bench_config["type"]:
-                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"]) for id in bench_config["cluster_config"]["node_ids"]]
+                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"], 2 * bench_config["settings"]["duration"]) for id in bench_config["cluster_config"]["node_ids"]]
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_micro, args)
                 if None in results:
@@ -238,7 +238,7 @@ def run_bench(bench_config, nodes, silent=False):
 
                 # now execute in threadpool
                 print("executing tpcc bench")
-                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['control_port']}", {"cmd": " ".join(command + ["--no-load"])}) for id in bench_config["cluster_config"]["node_ids"]]
+                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['control_port']}", {"cmd": " ".join(command + ["--no-load"])}, 2 * settings["duration"]) for id in bench_config["cluster_config"]["node_ids"]]
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_tpcc, args)
                 if None in results:
