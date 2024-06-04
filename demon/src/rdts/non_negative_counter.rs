@@ -108,6 +108,10 @@ impl Operation for NonNegativeCounterOp {
                     if *v >= val {
                         return Some(self.clone())
                     }
+                } else {
+                    if val <= 1000 {
+                        return Some(self.clone())
+                    }
                 }
                 None
             },
@@ -132,6 +136,8 @@ impl Operation for NonNegativeCounterOp {
                     if *v <= val {
                         *v -= val;
                     }
+                } else {
+                    state.insert(key, 1000 - val);
                 }
                 None
             },
