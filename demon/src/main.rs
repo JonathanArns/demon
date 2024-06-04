@@ -59,10 +59,7 @@ async fn main() {
                     protocols::causal::Causal::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue" => {
-                    protocols::redblue::RedBlue::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
-                },
-                "redblue-mod" => {
-                    protocols::redblue_modified::RedBlueModified::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                    protocols::deterministic_redblue::DeterministicRedBlue::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "gemini" => {
                     protocols::gemini::Gemini::<NonNegativeCounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
@@ -85,10 +82,7 @@ async fn main() {
                     protocols::causal::Causal::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue" => {
-                    protocols::redblue::RedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
-                },
-                "redblue-mod" => {
-                    protocols::redblue_modified::RedBlueModified::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                    protocols::deterministic_redblue::DeterministicRedBlue::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "gemini" => {
                     protocols::gemini::Gemini::<CounterOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
@@ -111,10 +105,7 @@ async fn main() {
                     protocols::causal::Causal::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "redblue" => {
-                    protocols::redblue::RedBlue::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
-                },
-                "redblue-mod" => {
-                    protocols::redblue_modified::RedBlueModified::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                    protocols::deterministic_redblue::DeterministicRedBlue::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
                 },
                 "gemini" => {
                     protocols::gemini::Gemini::<TpccOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;

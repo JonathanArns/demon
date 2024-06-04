@@ -9,6 +9,7 @@ pub mod demon;
 pub mod demon_old;
 pub mod basic;
 pub mod redblue;
+pub mod deterministic_redblue;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct QueryResult<O: Operation> {

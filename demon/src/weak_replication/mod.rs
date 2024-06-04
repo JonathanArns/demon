@@ -19,6 +19,8 @@ pub struct TaggedEntry<T> {
 impl<T> TaggedEntry<T> {
     /// Checks if this entry is contained in the snapshot or not.
     /// If not, it updates the snapshot to include the entry.
+    ///
+    /// Returns true, if the snapshot has been incremented.
     pub fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
         if self.idx >= snapshot.get(self.node) {
             // idx + 1, because snapshots represent length, not the max index
