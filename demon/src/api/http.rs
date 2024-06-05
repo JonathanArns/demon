@@ -136,7 +136,7 @@ async fn run_client<O: Operation>(
                 }
             },
             // request timeout
-            _ = tokio::time::sleep(Duration::from_secs(3)) => (),
+            _ = tokio::time::sleep(Duration::from_secs(5)) => (),
         } 
 
         if watcher.has_changed()? {

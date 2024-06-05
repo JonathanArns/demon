@@ -2,7 +2,7 @@ use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, s
 use async_trait::async_trait;
 use omnipaxos::storage::{Entry, NoSnapshot};
 use serde::{Deserialize, Serialize};
-use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::{self, Receiver}, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{TransactionId, Component, Message};
@@ -196,12 +196,14 @@ impl<O: Operation> Unistore<O> {
                                         check_now = true;
                                     }
                                 }
-                                // re-sequence with new id, if a PoR conflict was detected
-                                if !may_commit {
+                                // assert!(check_now, "we did premature GC on the transaction log, len: {:?}, start_id: {:?}", transaction_log.len(), start_id);
+
+                                // re-sequence with new id, if a PoR conflict was detected or the checks could not be done
+                                if !check_now || !may_commit {
                                     let mut waiting_transactions = proto.waiting_transactions.lock().await;
                                     if let Some((sender, retry_counter)) = waiting_transactions.remove(&transaction.id) {
-                                        if retry_counter >= 2 {
-                                            // we cancel a transaction after 3 failed commit attempts
+                                        if retry_counter >= 9 {
+                                            // we cancel a transaction after 10 failed commit attempts
                                             drop(sender);
                                             continue
                                         }
@@ -250,7 +252,7 @@ impl<O: Operation> Unistore<O> {
                             }
                             remove += 1;
                         }
-                        transaction_log.drain(0..remove);
+                        transaction_log.drain(0..(remove - 10000.min(remove)));
                     },
                 }
             }
