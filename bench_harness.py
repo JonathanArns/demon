@@ -18,7 +18,7 @@ def run_bench_loop(path):
         print(f"ran {counter} times")
         counter += 1
 
-def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False, latencies=True):
+def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False, latencies=True, forget_protos=[]):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
@@ -43,6 +43,15 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             "rtt_latencies": measure_rtt_latency(nodes) if latencies else None,
         }
 
+    # forget results from protocols that should be run again
+    if len(forget_protos) > 0:
+        if not silent:
+            print(f"forgetting state and results for protocols {forget_protos}")
+        bench_state["micro_results"] = [item for item in bench_state["micro_results"] if not item["proto"] in forget_protos]
+        bench_state["tpcc_results"] = [item for item in bench_state["tpcc_results"] if not item["proto"] in forget_protos]
+        bench_state["finished_benches"] = [item for item in bench_state["finished_benches"] if not json.loads(item)["cluster_config"]["proto"] in forget_protos]
+
+    # enumerate exeperiments and execute them
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
             repr = json.dumps(bench_config, sort_keys=True)
@@ -390,19 +399,28 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     write_output = True
     output_dir = "./experiment_output"
+    forget = []
     loop = False
     if "--no-write" in args:
         args.remove("--no-write")
         write_output = False
-    elif "--output-dir" in args:
+    if "--output-dir" in args:
         idx = args.index("--output-file")
         args.pop(idx)
         output_dir = args.pop(idx)
-    elif "-o" in args:
+    if "-o" in args:
         idx = args.index("-o")
         args.pop(idx)
         output_dir = args.pop(idx)
-    elif "--loop" in args:
+    if "--forget-proto" in args:
+        idx = args.index("--forget-proto")
+        args.pop(idx)
+        forget.append(args.pop(idx))
+    if "-f" in args:
+        idx = args.index("-f")
+        args.pop(idx)
+        forget.append(args.pop(idx))
+    if "--loop" in args:
         args.remove("--loop")
         loop = True
 
@@ -414,4 +432,4 @@ if __name__ == "__main__":
     if loop:
         run_bench_loop(path)
     else:
-        run_benches_from_file(path, write_output, output_dir)
+        run_benches_from_file(path, write_output=write_output, output_dir=output_dir, forget_protos=forget)
