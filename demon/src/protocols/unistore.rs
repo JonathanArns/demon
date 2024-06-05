@@ -2,7 +2,7 @@ use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, s
 use async_trait::async_trait;
 use omnipaxos::storage::{Entry, NoSnapshot};
 use serde::{Deserialize, Serialize};
-use tokio::{net::ToSocketAddrs, select, sync::{mpsc::{self, Receiver}, oneshot, Mutex, RwLock}};
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::{self,  Receiver}, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{TransactionId, Component, Message};
@@ -120,28 +120,23 @@ impl<O: Operation> Unistore<O> {
         mut weak_replication_events: Receiver<WeakEvent<TaggedWeakOp<O>>>,
         api: Box<dyn API<O>>,
     ) {
+        let (red_prep_sender, mut red_prep_receiver) = mpsc::channel(8000);
         let my_id = self.network.my_id().await;
         let mut api_events = api.start(self.network.clone()).await;
         let proto = self.clone();
+        let my_red_prep_sender = red_prep_sender.clone();
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_red() {
                     // strong operation
-                    let protocol = proto.clone();
-                    tokio::spawn(async move {
-                        let start_id = protocol.transaction_log.lock().await.last().map(|x| x.id);
-                        if let Some((shadow, snapshot)) = protocol.storage.generate_shadow(query.clone()).await {
-                            let id = protocol.generate_transaction_id().await;
-                            protocol.snapshot_barrier(&snapshot).await;
-                            let transaction = Transaction { id, snapshot, op: Some(shadow) };
-                            let tagged_transaction = TaggedTransaction { t: transaction, start_id, original_query: query };
-                            protocol.waiting_transactions.lock().await.insert(id, (result_sender, 0));
-                            protocol.sequencer.append(tagged_transaction).await;
-                        } else {
-                            let _ = result_sender.send(QueryResult { value: None });
-                        }
-                    });
+                    let start_id = proto.transaction_log.lock().await.last().map(|x| x.id);
+                    if let Some((shadow, snapshot)) = proto.storage.generate_shadow(query.clone()).await {
+                        let id = proto.generate_transaction_id().await;
+                        my_red_prep_sender.send((start_id, id, shadow, snapshot, query, result_sender, 0)).await.unwrap();
+                    } else {
+                        let _ = result_sender.send(QueryResult { value: None });
+                    }
                 } else {
                     // weak operation
                     if let Some((shadow, _)) = proto.storage.generate_shadow(query).await {
@@ -158,6 +153,17 @@ impl<O: Operation> Unistore<O> {
                         let _ = result_sender.send(QueryResult { value: None });
                     }
                 }
+            }
+        });
+        let proto = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let (start_id, id, shadow, snapshot, query, result_sender, retry_counter) = red_prep_receiver.recv().await.unwrap();
+                proto.waiting_transactions.lock().await.insert(id, (result_sender, retry_counter));
+                proto.snapshot_barrier(&snapshot).await;
+                let transaction = Transaction { id, snapshot, op: Some(shadow) };
+                let tagged_transaction = TaggedTransaction { t: transaction, start_id, original_query: query };
+                proto.sequencer.append(tagged_transaction).await;
             }
         });
         let proto = self.clone();
@@ -209,17 +215,10 @@ impl<O: Operation> Unistore<O> {
                                         }
                                         
                                         // generate shadow again
-                                        let protocol = proto.clone();
                                         let start_id = transaction_log.last().map(|x| x.id);
-                                        if let Some((shadow, snapshot)) = protocol.storage.generate_shadow(tagged_transaction.original_query.clone()).await {
-                                            let new_id = protocol.generate_transaction_id().await;
-                                            waiting_transactions.insert(new_id, (sender, retry_counter + 1));
-                                            tokio::spawn(async move {
-                                                protocol.snapshot_barrier(&snapshot).await;
-                                                let new_transaction = Transaction { id: new_id, snapshot, op: Some(shadow) };
-                                                let new_tagged_transaction = TaggedTransaction { t: new_transaction, start_id, original_query: tagged_transaction.original_query };
-                                                protocol.sequencer.append(new_tagged_transaction).await;
-                                            });
+                                        if let Some((shadow, snapshot)) = proto.storage.generate_shadow(tagged_transaction.original_query.clone()).await {
+                                            let new_id = proto.generate_transaction_id().await;
+                                            red_prep_sender.send((start_id, new_id, shadow, snapshot, tagged_transaction.original_query.clone(), sender, retry_counter + 1)).await.unwrap();
                                         } else {
                                             let _ = sender.send(QueryResult { value: None });
                                         }
@@ -243,16 +242,24 @@ impl<O: Operation> Unistore<O> {
                         // garbage collect transaction_log
                         // may only remove entries that are before all peers' highest known start_ids,
                         // so that they will not be needed anymore for transaction certification
-                        let mut remove = 0;
-                        'OUTER: for t in transaction_log.iter() {
-                            for (_node_id, start_id) in peer_start_ids.iter() {
-                                if t.id == *start_id {
-                                    break 'OUTER
-                                }
+                        let mut gc = true;
+                        for (_node_id, start_id) in peer_start_ids.iter() {
+                            if start_id.1 == 0 {
+                                gc = false;
                             }
-                            remove += 1;
                         }
-                        transaction_log.drain(0..(remove - 10000.min(remove)));
+                        if gc {
+                            let mut remove = 0;
+                            'OUTER: for t in transaction_log.iter() {
+                                for (_node_id, start_id) in peer_start_ids.iter() {
+                                    if t.id == *start_id {
+                                        break 'OUTER
+                                    }
+                                }
+                                remove += 1;
+                            }
+                            transaction_log.drain(0..remove);
+                        }
                     },
                 }
             }
