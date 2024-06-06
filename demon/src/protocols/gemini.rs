@@ -166,17 +166,21 @@ impl<O: Operation> Gemini<O> {
                     red_sender.send((query, result_sender)).await.unwrap();
                 } else {
                     // weak operation
-                    let shadow = proto.storage.generate_shadow(query).await;
-                    let result = if let Some(op) = shadow {
-                        if op.is_writing() {
-                            let tagged_op = ShadowOp::Blue(op.clone());
-                            proto.weak_replication.replicate(tagged_op).await;
-                        }
-                        proto.storage.exec(op).await
+                    if query.is_writing() {
+                        let result = if let Some(shadow) = proto.storage.generate_shadow(query).await {
+                            if shadow.is_writing() {
+                                let tagged_op = ShadowOp::Blue(shadow.clone());
+                                proto.weak_replication.replicate(tagged_op).await;
+                            }
+                            proto.storage.exec(shadow).await
+                        } else {
+                            QueryResult { value: None }
+                        };
+                        let _ = result_sender.send(result);
                     } else {
-                        QueryResult { value: None }
-                    };
-                    let _ = result_sender.send(result);
+                        let result = proto.storage.exec(query).await;
+                        let _ = result_sender.send(result);
+                    }
                 }
             }
         });

@@ -6,8 +6,6 @@ pub mod strict;
 pub mod causal;
 pub mod gemini;
 pub mod unistore;
-pub mod redblue;
-pub mod redblue_modified;
 pub mod deterministic_redblue;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

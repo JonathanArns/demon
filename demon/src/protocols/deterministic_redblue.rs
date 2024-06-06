@@ -118,18 +118,22 @@ impl<O: Operation> DeterministicRedBlue<O> {
                     });
                 } else {
                     // blue operation
-                    if let Some(shadow) = proto.storage.generate_blue_shadow(query.clone()).await {
-                        let result = proto.storage.exec_blue_shadow(shadow.clone(), my_id).await;
-                        let _ = result_sender.send(result);
-                        if shadow.is_writing() {
+                    if query.is_writing() {
+                        if let Some(shadow) = proto.storage.generate_blue_shadow(query.clone()).await {
+                            let result = proto.storage.exec_blue_shadow(shadow.clone(), my_id).await;
+                            let _ = result_sender.send(result);
                             let tagged_op = TaggedBlueOp {
                                 op: query,
                                 transaction_count: *proto.decided_transaction_count.read().await,
                             };
                             proto.weak_replication.replicate(tagged_op).await;
+                        } else {
+                            let _ = result_sender.send(QueryResult { value: None });
                         }
                     } else {
-                        let _ = result_sender.send(QueryResult { value: None });
+                        // just directly execute the read-only query
+                        let result = proto.storage.exec_blue_shadow(query, my_id).await;
+                        let _ = result_sender.send(result);
                     }
                 }
             }

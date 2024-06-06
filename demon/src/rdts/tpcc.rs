@@ -947,11 +947,18 @@ impl Operation for TpccOp {
         }
     }
 
-    fn gen_query(_settings: &crate::api::http::BenchSettings) -> Self {
-        unimplemented!("please use the py-tpcc driver implementation")
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+        match *self {
+            Self::LoadTuples {..} => Some(self.clone()),
+            Self::Delivery {..} => Some(self.clone()),
+            Self::NewOrder {..} => Some(self.clone()),
+            Self::Payment {..} => Some(self.clone()),
+            Self::OrderStatus {..} => None,
+            Self::StockLevel {..} => None,
+        }
     }
 
-    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
-        todo!()
+    fn gen_query(_settings: &crate::api::http::BenchSettings) -> Self {
+        unimplemented!("please use the py-tpcc driver implementation")
     }
 }

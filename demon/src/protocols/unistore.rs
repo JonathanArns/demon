@@ -139,18 +139,21 @@ impl<O: Operation> Unistore<O> {
                     }
                 } else {
                     // weak operation
-                    if let Some((shadow, _)) = proto.storage.generate_shadow(query).await {
-                        let result = proto.storage.exec_blue(shadow.clone(), my_id).await;
-                        let _ = result_sender.send(result);
-                        if shadow.is_writing() {
+                    if query.is_writing() {
+                        if let Some((shadow, _)) = proto.storage.generate_shadow(query).await {
+                            let result = proto.storage.exec_blue(shadow.clone(), my_id).await;
+                            let _ = result_sender.send(result);
                             let tagged_op = TaggedWeakOp {
                                 op: shadow,
                                 transaction_count: *proto.decided_transaction_count.read().await,
                             };
                             proto.weak_replication.replicate(tagged_op).await;
+                        } else {
+                            let _ = result_sender.send(QueryResult { value: None });
                         }
                     } else {
-                        let _ = result_sender.send(QueryResult { value: None });
+                        let result = proto.storage.exec_blue(query, my_id).await;
+                        let _ = result_sender.send(result);
                     }
                 }
             }
