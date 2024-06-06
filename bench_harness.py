@@ -240,7 +240,10 @@ def run_bench(bench_config, nodes, silent=False):
                     if not silent:
                         print("loading tpcc data")
                     node = nodes[bench_config["cluster_config"]["node_ids"][0]]
-                    requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json={"cmd": " ".join(command + ["--no-execute"])}).json()
+                    output = requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json={"cmd": " ".join(command + ["--no-execute"])}).json()
+                    if not silent and len(output["std_err"]) > 0:
+                        print(f"STDOUT:\n{output['std_out']}\nSTDERR:\n{output['std_err']}")
+                    time.sleep(1)
                 else:
                     if not silent:
                         print("skipped loading tpcc data")
