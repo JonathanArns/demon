@@ -78,10 +78,12 @@ pub struct BenchSettings {
 
 #[derive(Clone, Debug, Serialize)]
 struct BenchMetrics {
+    /// ops per second
+    pub throughput: f64,
     /// in millis
     pub mean_latency: f64,
-    /// ops per second
-    pub throughput: u64,
+    pub p99_latency: f64,
+    pub p95_latency: f64,
 }
 
 async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchMetrics>, StatusCode> {
@@ -107,9 +109,16 @@ async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
         measurements.extend_from_slice(&data);
     }
 
+    let mut latencies = measurements.iter().map(|m| m.latency.as_micros() as f64 * 1000.0).collect::<Vec<_>>();
+    latencies.sort_by_key(|x| (x * 1000.0) as usize);
+    let p99 = &latencies[((latencies.len() as f64 * 0.99) as usize)..latencies.len()];
+    let p95 = &latencies[((latencies.len() as f64 * 0.95) as usize)..latencies.len()];
+
     let metrics = BenchMetrics {
-        mean_latency: measurements.iter().map(|m| m.latency.as_millis() as f64).sum::<f64>() / measurements.len() as f64,
-        throughput: measurements.len() as u64 / settings.duration,
+        throughput: measurements.len() as f64 / settings.duration as f64,
+        mean_latency: latencies.iter().sum::<f64>() / latencies.len() as f64,
+        p99_latency: p99.iter().sum::<f64>() / p99.len() as f64,
+        p95_latency: p95.iter().sum::<f64>() / p95.len() as f64,
     };
     Ok(Json(metrics))
 }
