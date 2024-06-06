@@ -123,7 +123,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
                             let result = proto.storage.exec_blue_shadow(shadow.clone(), my_id).await;
                             let _ = result_sender.send(result);
                             let tagged_op = TaggedBlueOp {
-                                op: query,
+                                op: shadow,
                                 transaction_count: *proto.decided_transaction_count.read().await,
                             };
                             proto.weak_replication.replicate(tagged_op).await;

@@ -31,7 +31,7 @@ impl<O: Operation> Storage<O> {
         }
     }
 
-    /// Generates the shadow op for `op` on the current state.
+    /// Gets the current snapshot.
     pub async fn get_current_snapshot(&self) -> Snapshot {
         self.state_snapshot.read().await.clone()
     }
@@ -101,6 +101,7 @@ impl<O: Operation> Storage<O> {
         if let Some(op) = t.op {
             if let Some(shadow) = op.generate_shadow(&red_shadow_state) {
                 // apply the shadow operation
+                let _ = shadow.apply(&mut red_shadow_state);
                 output = shadow.apply(&mut state);
             }
         }
