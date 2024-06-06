@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id="reg-${TARGETPLATFORM
 FROM python:3.11-slim-bookworm 
 
 RUN apt-get update && apt-get install -y ca-certificates libssl-dev iproute2 && rm -rf /var/lib/apt/lists/*
-RUN pip install flask requests
+RUN pip install flask requests httpx[http2]
 
 COPY ./py-tpcc /workspace/py-tpcc
 RUN echo "[demon]\nhost: localhost\nport: 80" > /workspace/demon_driver.conf
