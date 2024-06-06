@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::basic::Storage, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, weak_replication::{WeakEvent, WeakReplication}};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::mpsc::Receiver};
 use std::sync::Arc;
@@ -59,10 +59,17 @@ impl<O: Operation> Causal<O> {
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
-                let result = proto.storage.exec(query.clone()).await;
-                let _ = result_sender.send(result);
                 if query.is_writing() {
-                    proto.weak_replication.replicate(query).await;
+                    if let Some(shadow) = proto.storage.generate_shadow(query).await {
+                        let result = proto.storage.exec(shadow.clone()).await;
+                        let _ = result_sender.send(result);
+                        proto.weak_replication.replicate(shadow).await;
+                    } else {
+                        let _ = result_sender.send(QueryResult { value: None });
+                    }
+                } else {
+                    let result = proto.storage.exec(query).await;
+                    let _ = result_sender.send(result);
                 }
             }
         });
