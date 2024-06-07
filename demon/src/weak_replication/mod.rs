@@ -1,4 +1,4 @@
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
+use std::{collections::{HashMap, VecDeque}, marker::PhantomData, sync::Arc, time::Duration};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{mpsc::{channel, Receiver, Sender}, Mutex, RwLock};
@@ -11,76 +11,43 @@ pub use snapshot::Snapshot;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaggedEntry<T> {
-    pub node: NodeId,
-    pub idx: u64,
+    pub causality: Snapshot,
     pub value: T,
 }
 
-impl<T> TaggedEntry<T> {
-    /// Checks if this entry is contained in the snapshot or not.
-    /// If not, it updates the snapshot to include the entry.
-    ///
-    /// Returns true, if the snapshot has been incremented.
-    pub fn update_snapshot(&self, snapshot: &mut Snapshot) -> bool {
-        if self.idx >= snapshot.get(self.node) {
-            // idx + 1, because snapshots represent length, not the max index
-            *snapshot.get_mut(self.node) = self.idx + 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns true, if this entry is contained in the snapshot.
-    pub fn is_in_snapshot(&self, snapshot: &Snapshot) -> bool {
-        self.idx < snapshot.get(self.node)
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum WeakMsg<T> {
+enum CausalReplicationMsg<T> {
     Snapshot(Snapshot),
     Entries(Vec<TaggedEntry<T>>),
 }
 
 #[derive(Debug, Clone)]
-pub enum WeakEvent<T> {
+pub enum CausalReplicationEvent<T> {
     /// Triggered for all entries that did not orininate at this node.
     Deliver(TaggedEntry<T>),
     /// Triggered every time the quorum-replicated snapshot increases.
     QuorumReplicated(Snapshot),
 }
 
-struct LocallyOrderedEntry<T> {
-    value: T,
-    /// represents the order in which entries were locally received, to ensure causality within
-    /// replication messages
-    idx: usize,
-}
-
 /// An eventually consistent replication layer that replicates one totally ordered log per
 /// participant, and keeps track of which entries are quorum-replicated.
-pub struct WeakReplication<T> {
+pub struct CausalReplication<T> {
     network: Network<Message>,
-    event_sender: Sender<WeakEvent<T>>,
-    /// The replicated logs, with an offset
-    logs: Arc<RwLock<HashMap<NodeId, (usize, Vec<LocallyOrderedEntry<T>>)>>>,
-    /// a counter that is incremented for each entry
-    local_log_len: Arc<Mutex<usize>>,
-    quorum_replicated_snapshot: Arc<Mutex<Snapshot>>,
+    event_sender: Sender<CausalReplicationEvent<T>>,
+    log: Arc<RwLock<VecDeque<TaggedEntry<T>>>>,
     current_snapshot: Arc<Mutex<Snapshot>>,
     peer_snapshots: Arc<Mutex<HashMap<NodeId, Snapshot>>>,
+    quorum_replicated_snapshot: Arc<Mutex<Snapshot>>,
     quorum_size: u64,
     _phantom: PhantomData<T>,
 }
 
-impl<T> Clone for WeakReplication<T> {
+impl<T> Clone for CausalReplication<T> {
     fn clone(&self) -> Self {
         Self {
             network: self.network.clone(),
             event_sender: self.event_sender.clone(),
-            logs: self.logs.clone(),
-            local_log_len: self.local_log_len.clone(),
+            log: self.log.clone(),
             quorum_replicated_snapshot: self.quorum_replicated_snapshot.clone(),
             current_snapshot: self.current_snapshot.clone(),
             peer_snapshots: self.peer_snapshots.clone(),
@@ -90,16 +57,12 @@ impl<T> Clone for WeakReplication<T> {
     }
 }
 
-impl<T> WeakReplication<T>
+impl<T> CausalReplication<T>
 where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
-    pub async fn new(network: Network<Message>) -> (Self, Receiver<WeakEvent<T>>) {
+    pub async fn new(network: Network<Message>) -> (Self, Receiver<CausalReplicationEvent<T>>) {
         let (sender, receiver) = channel(1000);
 
         let nodes = network.nodes().await;
-        let mut logs = HashMap::new();
-        for id in &nodes {
-            logs.insert(*id, (0, vec![]));
-        }
         let current_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let peer_snapshots = Arc::new(Mutex::new(HashMap::new()));
@@ -107,8 +70,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         let weak_replication = Self {
             network,
             event_sender: sender,
-            logs: Arc::new(RwLock::new(logs)),
-            local_log_len: Default::default(),
+            log: Default::default(),
             quorum_replicated_snapshot,
             current_snapshot,
             peer_snapshots,
@@ -122,62 +84,38 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
 
     /// Handle an incoming message.
     pub async fn handle_msg(&self, from: NodeId, data: Vec<u8>) {
-        let msg: WeakMsg<T> = bincode::deserialize(&data).unwrap();
+        let msg: CausalReplicationMsg<T> = bincode::deserialize(&data).unwrap();
         match msg {
-            WeakMsg::Snapshot(s) => {
+            CausalReplicationMsg::Snapshot(s) => {
                 let mut entries = vec![];
                 {
-                    let logs_latch = self.logs.read().await;
-                    for id in 1..=s.vec.len() {
-                        let node_id = NodeId(id as u32);
-                        // we only respond with entries, if we also replicate this log
-                        if let Some((offset, log)) = logs_latch.get(&node_id) {
-                            let range_start = s.get(node_id) as usize - *offset;
-                            if log.len() > range_start {
-                                let peer_offset = s.get(node_id);
-                                let tagged_entries = log[range_start..].iter().enumerate().map(|(i, entry)| {
-                                    LocallyOrderedEntry{
-                                        idx: entry.idx,
-                                        value: TaggedEntry {
-                                            value: entry.value.clone(),
-                                            node: node_id,
-                                            idx: peer_offset + i as u64,
-                                        }
-                                    }
-                                });
-                                entries.extend(tagged_entries);
-                            }
+                    let log = self.log.read().await;
+                    for entry in log.iter() {
+                        if entry.causality.greater(&s) {
+                            entries.push(entry.clone());
                         }
                     }
                 }
                 if entries.len() > 0 {
-                    entries.sort_unstable_by_key(|e| e.idx);
-                    let entries = entries.into_iter().map(|e| e.value).collect();
-                    let payload = bincode::serialize(&WeakMsg::Entries(entries)).unwrap();
+                    let payload = bincode::serialize(&CausalReplicationMsg::Entries(entries)).unwrap();
                     let msg = Message{component: Component::WeakReplication, payload};
                     self.network.send(from, msg).await;
                 }
                 self.peer_snapshots.lock().await.insert(from, s);
                 if let Some(snapshot) = self.update_quorum_replicated_snapshot().await {
-                    self.event_sender.send(WeakEvent::QuorumReplicated(snapshot)).await.unwrap();
+                    self.event_sender.send(CausalReplicationEvent::QuorumReplicated(snapshot)).await.unwrap();
                 }
             },
-            WeakMsg::Entries(e) => {
-                let mut latch = self.current_snapshot.lock().await;
-                let mut logs = self.logs.write().await;
-                let mut local_log_len = self.local_log_len.lock().await;
+            CausalReplicationMsg::Entries(e) => {
+                let mut current_snapshot = self.current_snapshot.lock().await;
+                let mut log = self.log.write().await;
                 for entry in e {
-                    let is_new_entry = entry.update_snapshot(&mut latch);
-                    if is_new_entry {
-                        let (_offset, log) = logs.get_mut(&entry.node).unwrap();
-                        let locally_ordered_entry = LocallyOrderedEntry {
-                            idx: *local_log_len,
-                            value: entry.value.clone(),
-                        };
-                        *local_log_len += 1;
-                        log.push(locally_ordered_entry);
-                        self.event_sender.send(WeakEvent::Deliver(entry)).await.unwrap();
+                    if entry.causality.included_in(&current_snapshot) {
+                        continue
                     }
+                    current_snapshot.merge_inplace(&entry.causality);
+                    log.push_back(entry.clone());
+                    self.event_sender.send(CausalReplicationEvent::Deliver(entry)).await.unwrap();
                 }
             },
         }
@@ -186,43 +124,35 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     /// Stores and starts replicating an entry in this node's log.
     pub async fn replicate(&self, entry: T) {
         let my_id = self.network.my_id().await;
-        self.current_snapshot.lock().await.increment(my_id, 1);
-        let mut log_latch = self.logs.write().await;
-        let (_offset, log) = log_latch.get_mut(&my_id).unwrap();
-        let mut local_log_len = self.local_log_len.lock().await;
-        let locally_ordered_entry = LocallyOrderedEntry {
-            idx: *local_log_len,
+        let mut snapshot = self.current_snapshot.lock().await;
+        snapshot.increment(my_id, 1);
+        let tagged_entry = TaggedEntry {
+            causality: snapshot.clone(),
             value: entry,
         };
-        *local_log_len += 1;
-        log.push(locally_ordered_entry);
+        self.log.write().await.push_back(tagged_entry);
     }
 
     /// Performs garbage collection.
     async fn collect_garbage(&self) {
-        let peer_latch = self.peer_snapshots.lock().await;
-        let current_latch = self.current_snapshot.lock().await;
-        let mut fully_replicated_snapshot = vec![];
-        for i in 0..current_latch.vec.len() {
-            let mut values = vec![current_latch.vec[i]];
-            for peer in peer_latch.values() {
-                values.push(peer.vec[i]);
+        let fully_replicated_snapshot = {
+            let peer_latch = self.peer_snapshots.lock().await;
+            let mut fully_replicated_snapshot = self.current_snapshot.lock().await.clone();
+            for peer_snapshot in peer_latch.values() {
+                fully_replicated_snapshot.greatest_lower_bound_inplace(peer_snapshot);
             }
-            values.sort_unstable();
-            fully_replicated_snapshot.push(values[0]);
-        }
-        let fully_replicated_snapshot = Snapshot{vec: fully_replicated_snapshot};
+            fully_replicated_snapshot
+        };
 
-        let mut logs_latch = self.logs.write().await;
-        for id in self.network.nodes().await {
-            let (offset, log) = logs_latch.get_mut(&id).unwrap();
-            let snapshot_offset = fully_replicated_snapshot.get(id) as usize;
-            if *offset < snapshot_offset {
-                let diff = snapshot_offset - *offset;
-                *offset = snapshot_offset;
-                log.drain(0..diff);
+        let mut log = self.log.write().await;
+        while let Some(entry) = log.front() {
+            if entry.causality.included_in(&fully_replicated_snapshot) {
+                log.pop_front();
+            } else {
+                break
             }
         }
+        // log.retain(|entry| !fully_replicated_snapshot.greater(&entry.causality));
     }
 
     /// Re-computes the quorum_replicated_snapshot.
@@ -256,7 +186,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     async fn run_gossip(self) {
         loop {
             tokio::time::sleep(Duration::from_millis(23)).await;
-            let payload = bincode::serialize(&WeakMsg::<T>::Snapshot(self.current_snapshot.lock().await.clone())).unwrap();
+            let payload = bincode::serialize(&CausalReplicationMsg::<T>::Snapshot(self.current_snapshot.lock().await.clone())).unwrap();
             let msg = Message{component: Component::WeakReplication, payload};
             self.network.broadcast(msg).await;
         }

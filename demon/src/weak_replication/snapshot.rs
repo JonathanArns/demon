@@ -45,10 +45,27 @@ impl Snapshot {
         Self { vec: vector }
     }
 
+    /// As opposed to `merge`, which computes the least upper bound, this computes the greatest lower bound.
+    #[allow(unused)]
+    pub fn greatest_lower_bound(&self, other: &Self) -> Self {
+        let mut vector = vec![];
+        for i in 0..self.vec.len() {
+            vector.push(self.vec[i].min(other.vec[i]));
+        }
+        Self { vec: vector }
+    }
+
     /// Computes the least upper bound of the two snapshots, updating this snapshot in place.
     pub fn merge_inplace(&mut self, other: &Self) {
         for i in 0..self.vec.len() {
             self.vec[i] = self.vec[i].max(other.vec[i]);
+        }
+    }
+
+    /// As opposed to `merge`, which computes the least upper bound, this computes the greatest lower bound.
+    pub fn greatest_lower_bound_inplace(&mut self, other: &Self) {
+        for i in 0..self.vec.len() {
+            self.vec[i] = self.vec[i].min(other.vec[i]);
         }
     }
 
@@ -61,5 +78,14 @@ impl Snapshot {
         }
         false
     }
-}
 
+    /// Returns true if every operation in `self` is included in `other`.
+    pub fn included_in(&self, other: &Self) -> bool {
+        for i in 0..self.vec.len() {
+            if self.vec[i] < other.vec[i] {
+                return false
+            }
+        }
+        true
+    }
+}
