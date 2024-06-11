@@ -202,7 +202,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     /// Should be called with a cloned handle to the sequencer.
     async fn run_gc(self) {
         loop {
-            tokio::time::sleep(Duration::from_millis(10_000)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
             self.collect_garbage().await;
         }
     }
