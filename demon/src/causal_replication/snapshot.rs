@@ -82,7 +82,7 @@ impl Snapshot {
     /// Returns true if every operation in `self` is included in `other`.
     pub fn included_in(&self, other: &Self) -> bool {
         for i in 0..self.vec.len() {
-            if self.vec[i] < other.vec[i] {
+            if self.vec[i] > other.vec[i] {
                 return false
             }
         }
