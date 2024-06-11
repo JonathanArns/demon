@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, causal_replication::{CausalReplicationEvent, CausalReplication}};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::mpsc::Receiver};
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use super::{Component, Message};
 pub struct Causal<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
-    weak_replication: WeakReplication<O>,
+    causal_replication: CausalReplication<O>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -20,7 +20,7 @@ impl<O: Operation> MsgHandler<Message> for Causal<O> {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
         match msg.component {
             Component::WeakReplication => {
-                self.weak_replication.handle_msg(from, msg.payload).await;
+                self.causal_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => unreachable!(),
             Component::Sequencer => unreachable!(),
@@ -33,15 +33,15 @@ impl<O: Operation> Causal<O> {
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
+        let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
         let proto = Arc::new(Self {
             network: network.clone(),
             storage,
-            weak_replication,
+            causal_replication,
         });
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
-            weak_replication_events,
+            causal_replication_events,
             api,
         ));
         proto
@@ -51,7 +51,7 @@ impl<O: Operation> Causal<O> {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut weak_replication_events: Receiver<WeakEvent<O>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<O>>,
         api: Box<dyn API<O>>,
     ) {
         let mut api_events = api.start(self.network.clone()).await;
@@ -63,7 +63,7 @@ impl<O: Operation> Causal<O> {
                     if let Some(shadow) = proto.storage.generate_shadow(query).await {
                         let result = proto.storage.exec(shadow.clone()).await;
                         let _ = result_sender.send(result);
-                        proto.weak_replication.replicate(shadow).await;
+                        proto.causal_replication.replicate(shadow).await;
                     } else {
                         let _ = result_sender.send(QueryResult { value: None });
                     }
@@ -76,12 +76,12 @@ impl<O: Operation> Causal<O> {
         let proto = self.clone();
         tokio::spawn(async move {
             loop {
-                let e = weak_replication_events.recv().await.unwrap();
+                let e = causal_replication_events.recv().await.unwrap();
                 match e {
-                    WeakEvent::Deliver(op) => {
+                    CausalReplicationEvent::Deliver(op) => {
                         proto.storage.exec(op.value).await;
                     },
-                    WeakEvent::QuorumReplicated(_snapshot) => (),
+                    CausalReplicationEvent::QuorumReplicated(_snapshot) => (),
                 }
             }
         });

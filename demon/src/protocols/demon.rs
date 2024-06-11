@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{demon::Storage, QueryResult, Transaction}, weak_replication::{Snapshot, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{demon::Storage, QueryResult, Transaction}, causal_replication::{Snapshot, CausalReplicationEvent, CausalReplication}};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -13,7 +13,7 @@ pub struct DeMon<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
-    weak_replication: WeakReplication<O>,
+    causal_replication: CausalReplication<O>,
     /// TODO: I think the fields don't need to be arcs themselves, demon is always in an arc itself
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
@@ -32,7 +32,7 @@ impl<O: Operation> MsgHandler<Message> for DeMon<O> {
                 self.sequencer.handle_msg(msg.payload).await;
             },
             Component::WeakReplication => {
-                self.weak_replication.handle_msg(from, msg.payload).await;
+                self.causal_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => unreachable!(),
         }
@@ -45,14 +45,14 @@ impl<O: Operation> DeMon<O> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
+        let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let nodes = network.nodes().await;
         let demon = Arc::new(Self {
             network: network.clone(),
             storage,
             sequencer,
-            weak_replication,
+            causal_replication,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
             next_transaction_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
             waiting_transactions: Default::default(),
@@ -60,7 +60,7 @@ impl<O: Operation> DeMon<O> {
         network.set_msg_handler(demon.clone()).await;
         tokio::task::spawn(demon.clone().event_loop(
             sequencer_events,
-            weak_replication_events,
+            causal_replication_events,
             api,
         ));
         demon
@@ -84,7 +84,7 @@ impl<O: Operation> DeMon<O> {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
-        mut weak_replication_events: Receiver<WeakEvent<O>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<O>>,
         api: Box<dyn API<O>>,
     ) {
         let my_id = self.network.my_id().await;
@@ -106,7 +106,7 @@ impl<O: Operation> DeMon<O> {
                         if let Some(shadow) = demon.storage.generate_shadow(query).await {
                             let result = demon.storage.exec_weak_query(shadow.clone(), my_id).await;
                             let _ = result_sender.send(result);
-                            demon.weak_replication.replicate(shadow).await;
+                            demon.causal_replication.replicate(shadow).await;
                         } else {
                             let _ = result_sender.send(QueryResult { value: None });
                         }
@@ -138,12 +138,12 @@ impl<O: Operation> DeMon<O> {
         let demon = self.clone();
         tokio::spawn(async move {
             loop {
-                let e = weak_replication_events.recv().await.unwrap();
+                let e = causal_replication_events.recv().await.unwrap();
                 match e {
-                    WeakEvent::Deliver(op) => {
+                    CausalReplicationEvent::Deliver(op) => {
                         demon.storage.exec_remote_weak_query(op).await;
                     },
-                    WeakEvent::QuorumReplicated(snapshot) => {
+                    CausalReplicationEvent::QuorumReplicated(snapshot) => {
                         demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);
                     },
                 }

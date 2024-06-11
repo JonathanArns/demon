@@ -67,7 +67,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let peer_snapshots = Arc::new(Mutex::new(HashMap::new()));
         let quorum_size = (nodes.len() as u64) / 2 + 1;
-        let weak_replication = Self {
+        let causal_replication = Self {
             network,
             event_sender: sender,
             log: Default::default(),
@@ -77,9 +77,9 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             quorum_size,
             _phantom: PhantomData,
         };
-        tokio::task::spawn(weak_replication.clone().run_gossip());
-        tokio::task::spawn(weak_replication.clone().run_gc());
-        (weak_replication, receiver)
+        tokio::task::spawn(causal_replication.clone().run_gossip());
+        tokio::task::spawn(causal_replication.clone().run_gc());
+        (causal_replication, receiver)
     }
 
     /// Handle an incoming message.
@@ -122,7 +122,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     }
 
     /// Stores and starts replicating an entry in this node's log.
-    pub async fn replicate(&self, entry: T) {
+    pub async fn replicate(&self, entry: T) -> TaggedEntry<T> {
         let my_id = self.network.my_id().await;
         let mut snapshot = self.current_snapshot.lock().await;
         snapshot.increment(my_id, 1);
@@ -130,7 +130,8 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             causality: snapshot.clone(),
             value: entry,
         };
-        self.log.write().await.push_back(tagged_entry);
+        self.log.write().await.push_back(tagged_entry.clone());
+        tagged_entry
     }
 
     /// Performs garbage collection.
@@ -152,7 +153,11 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                 break
             }
         }
-        // log.retain(|entry| !fully_replicated_snapshot.greater(&entry.causality));
+        // maybe shrink capacity
+        let len = log.len();
+        if log.capacity() > 1024.max(10 * len) {
+            log.shrink_to(1024.max(2 * len))
+        }
     }
 
     /// Re-computes the quorum_replicated_snapshot.

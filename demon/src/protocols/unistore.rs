@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{redblue::Storage, QueryResult, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{redblue::Storage, QueryResult, Transaction}, causal_replication::{Snapshot, TaggedEntry, CausalReplicationEvent, CausalReplication}};
 use async_trait::async_trait;
 use omnipaxos::storage::{Entry, NoSnapshot};
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ pub struct Unistore<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<TaggedTransaction<O>>,
-    weak_replication: WeakReplication<TaggedWeakOp<O>>,
+    causal_replication: CausalReplication<TaggedWeakOp<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     quorum_replicated_snapshot: Arc<RwLock<Snapshot>>,
     decided_transaction_count: Arc<RwLock<usize>>,
@@ -50,7 +50,7 @@ impl<O: Operation> MsgHandler<Message> for Unistore<O> {
                 self.sequencer.handle_msg(msg.payload).await;
             },
             Component::WeakReplication => {
-                self.weak_replication.handle_msg(from, msg.payload).await;
+                self.causal_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => unreachable!(),
         }
@@ -63,7 +63,7 @@ impl<O: Operation> Unistore<O> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
+        let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let nodes = network.nodes().await;
         let mut peer_start_ids = vec![];
@@ -74,7 +74,7 @@ impl<O: Operation> Unistore<O> {
             network: network.clone(),
             storage,
             sequencer,
-            weak_replication,
+            causal_replication,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
             quorum_replicated_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
             decided_transaction_count: Default::default(),
@@ -85,7 +85,7 @@ impl<O: Operation> Unistore<O> {
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
             sequencer_events,
-            weak_replication_events,
+            causal_replication_events,
             api,
         ));
         proto
@@ -117,7 +117,7 @@ impl<O: Operation> Unistore<O> {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent<TaggedTransaction<O>>>,
-        mut weak_replication_events: Receiver<WeakEvent<TaggedWeakOp<O>>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<TaggedWeakOp<O>>>,
         api: Box<dyn API<O>>,
     ) {
         let (red_prep_sender, mut red_prep_receiver) = mpsc::channel(8000);
@@ -147,7 +147,7 @@ impl<O: Operation> Unistore<O> {
                                 op: shadow,
                                 transaction_count: *proto.decided_transaction_count.read().await,
                             };
-                            proto.weak_replication.replicate(tagged_op).await;
+                            proto.causal_replication.replicate(tagged_op).await;
                         } else {
                             let _ = result_sender.send(QueryResult { value: None });
                         }
@@ -272,9 +272,9 @@ impl<O: Operation> Unistore<O> {
             let mut waiting_blue_ops: Vec<TaggedEntry<TaggedWeakOp<O>>> = vec![];
             loop {
                 select! {
-                    e = weak_replication_events.recv() => {
+                    e = causal_replication_events.recv() => {
                         match e.unwrap() {
-                            WeakEvent::Deliver(new_op) => {
+                            CausalReplicationEvent::Deliver(new_op) => {
                                 // first, execute waiting ops that this might depend on
                                 let transaction_count = *proto.decided_transaction_count.read().await;
                                 let mut i = 0;
@@ -282,7 +282,7 @@ impl<O: Operation> Unistore<O> {
                                     let op = &waiting_blue_ops[i];
                                     if transaction_count >= op.value.transaction_count {
                                         let op = waiting_blue_ops.remove(i);
-                                        proto.storage.exec_blue(op.value.op, op.node).await;
+                                        proto.storage.exec_blue_remote(op.value.op, &op.causality).await;
                                     } else {
                                         i += 1;
                                     }
@@ -291,10 +291,10 @@ impl<O: Operation> Unistore<O> {
                                 if new_op.value.transaction_count > transaction_count {
                                     waiting_blue_ops.push(new_op);
                                 } else {
-                                    proto.storage.exec_blue(new_op.value.op, new_op.node).await;
+                                    proto.storage.exec_blue_remote(new_op.value.op, &new_op.causality).await;
                                 }
                             },
-                            WeakEvent::QuorumReplicated(snapshot) => {
+                            CausalReplicationEvent::QuorumReplicated(snapshot) => {
                                 proto.quorum_replicated_snapshot.write().await.merge_inplace(&snapshot);
                             },
                         }
@@ -307,7 +307,7 @@ impl<O: Operation> Unistore<O> {
                             let op = &waiting_blue_ops[i];
                             if transaction_count >= op.value.transaction_count {
                                 let op = waiting_blue_ops.remove(i);
-                                proto.storage.exec_blue(op.value.op, op.node).await;
+                                proto.storage.exec_blue_remote(op.value.op, &op.causality).await;
                             } else {
                                 i += 1;
                             }

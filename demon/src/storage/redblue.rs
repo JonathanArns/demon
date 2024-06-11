@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use crate::{network::NodeId, weak_replication::Snapshot};
+use crate::{network::NodeId, causal_replication::Snapshot};
 use super::{QueryResult, Transaction};
 use crate::rdts::Operation;
 
@@ -25,6 +25,16 @@ impl<O: Operation> Storage<O> {
         let output = op.apply(&mut *self.state.write().await);
         if op.is_writing() {
             snapshot.increment(from, 1);
+        }
+        QueryResult{ value: output }
+    }
+
+    /// Executes a blue operation.
+    pub async fn exec_blue_remote(&self, op: O, causality: &Snapshot) -> QueryResult<O> {
+        let mut snapshot = self.current_snapshot.write().await;
+        let output = op.apply(&mut *self.state.write().await);
+        if op.is_writing() {
+            snapshot.merge_inplace(causality);
         }
         QueryResult{ value: output }
     }

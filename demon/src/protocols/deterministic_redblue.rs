@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{deterministic_redblue::Storage, QueryResult, Transaction}, weak_replication::{Snapshot, TaggedEntry, WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{deterministic_redblue::Storage, QueryResult, Transaction}, causal_replication::{Snapshot, TaggedEntry, CausalReplicationEvent, CausalReplication}};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
@@ -18,7 +18,7 @@ pub struct DeterministicRedBlue<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
-    weak_replication: WeakReplication<TaggedBlueOp<O>>,
+    causal_replication: CausalReplication<TaggedBlueOp<O>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     quorum_replicated_snapshot: Arc<RwLock<Snapshot>>,
     decided_transaction_count: Arc<RwLock<usize>>,
@@ -34,7 +34,7 @@ impl<O: Operation> MsgHandler<Message> for DeterministicRedBlue<O> {
                 self.sequencer.handle_msg(msg.payload).await;
             },
             Component::WeakReplication => {
-                self.weak_replication.handle_msg(from, msg.payload).await;
+                self.causal_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => unreachable!(),
         }
@@ -47,14 +47,14 @@ impl<O: Operation> DeterministicRedBlue<O> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new(network.nodes().await);
         let (sequencer, sequencer_events) = Sequencer::new(network.clone()).await;
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
+        let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let nodes = network.nodes().await;
         let proto = Arc::new(Self {
             network: network.clone(),
             storage,
             sequencer,
-            weak_replication,
+            causal_replication,
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
             quorum_replicated_snapshot: Arc::new(RwLock::new(Snapshot{vec:vec![0; nodes.len()]})),
             decided_transaction_count: Default::default(),
@@ -63,7 +63,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
             sequencer_events,
-            weak_replication_events,
+            causal_replication_events,
             api,
         ));
         proto
@@ -97,10 +97,9 @@ impl<O: Operation> DeterministicRedBlue<O> {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
-        mut weak_replication_events: Receiver<WeakEvent<TaggedBlueOp<O>>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<TaggedBlueOp<O>>>,
         api: Box<dyn API<O>>,
     ) {
-        let my_id = self.network.my_id().await;
         let mut api_events = api.start(self.network.clone()).await;
         let proto = self.clone();
         tokio::spawn(async move {
@@ -120,19 +119,19 @@ impl<O: Operation> DeterministicRedBlue<O> {
                     // blue operation
                     if query.is_writing() {
                         if let Some(shadow) = proto.storage.generate_blue_shadow(query.clone()).await {
-                            let result = proto.storage.exec_blue_shadow(shadow.clone(), my_id).await;
-                            let _ = result_sender.send(result);
                             let tagged_op = TaggedBlueOp {
                                 op: shadow,
                                 transaction_count: *proto.decided_transaction_count.read().await,
                             };
-                            proto.weak_replication.replicate(tagged_op).await;
+                            let op = proto.causal_replication.replicate(tagged_op).await;
+                            let result = proto.storage.exec_blue_shadow(op.value.op, op.causality).await;
+                            let _ = result_sender.send(result);
                         } else {
                             let _ = result_sender.send(QueryResult { value: None });
                         }
                     } else {
                         // just directly execute the read-only query
-                        let result = proto.storage.exec_blue_shadow(query, my_id).await;
+                        let result = proto.storage.exec_blue_shadow(query, Snapshot::new(&[])).await;
                         let _ = result_sender.send(result);
                     }
                 }
@@ -164,9 +163,9 @@ impl<O: Operation> DeterministicRedBlue<O> {
             let mut waiting_blue_ops: Vec<TaggedEntry<TaggedBlueOp<O>>> = vec![];
             loop {
                 select! {
-                    e = weak_replication_events.recv() => {
+                    e = causal_replication_events.recv() => {
                         match e.unwrap() {
-                            WeakEvent::Deliver(new_op) => {
+                            CausalReplicationEvent::Deliver(new_op) => {
                                 // first, execute waiting ops that this might depend on
                                 let transaction_count = *proto.decided_transaction_count.read().await;
                                 let mut i = 0;
@@ -174,7 +173,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                     let op = &waiting_blue_ops[i];
                                     if transaction_count >= op.value.transaction_count {
                                         let op = waiting_blue_ops.remove(i);
-                                        proto.storage.exec_blue_shadow(op.value.op, op.node).await;
+                                        proto.storage.exec_blue_shadow(op.value.op, op.causality).await;
                                     } else {
                                         i += 1;
                                     }
@@ -183,10 +182,10 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                 if new_op.value.transaction_count > transaction_count {
                                     waiting_blue_ops.push(new_op);
                                 } else {
-                                    proto.storage.exec_blue_shadow(new_op.value.op, new_op.node).await;
+                                    proto.storage.exec_blue_shadow(new_op.value.op, new_op.causality).await;
                                 }
                             },
-                            WeakEvent::QuorumReplicated(snapshot) => {
+                            CausalReplicationEvent::QuorumReplicated(snapshot) => {
                                 proto.quorum_replicated_snapshot.write().await.merge_inplace(&snapshot);
                             },
                         }
@@ -199,7 +198,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
                             let op = &waiting_blue_ops[i];
                             if transaction_count >= op.value.transaction_count {
                                 let op = waiting_blue_ops.remove(i);
-                                proto.storage.exec_blue_shadow(op.value.op, op.node).await;
+                                proto.storage.exec_blue_shadow(op.value.op, op.causality).await;
                             } else {
                                 i += 1;
                             }

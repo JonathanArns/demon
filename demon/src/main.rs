@@ -5,7 +5,7 @@ mod network;
 /// The transaction sequencing layer (replicated Log)
 mod sequencer;
 /// The replication layer used for weak operations
-mod weak_replication;
+mod causal_replication;
 /// The storage and query execution layer.
 mod storage;
 /// RDT definitions.

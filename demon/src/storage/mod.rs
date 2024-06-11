@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use omnipaxos::storage::{Entry, NoSnapshot};
 
-use crate::{protocols::TransactionId, rdts::Operation, weak_replication::Snapshot};
+use crate::{protocols::TransactionId, rdts::Operation, causal_replication::Snapshot};
 
 pub mod demon;
 pub mod demon_old;

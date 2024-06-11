@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, weak_replication::{WeakEvent, WeakReplication}};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, causal_replication::{CausalReplicationEvent, CausalReplication}};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::{net::ToSocketAddrs, sync::{mpsc::{self, Receiver}, oneshot, Mutex}};
@@ -24,7 +24,7 @@ pub struct Gemini<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     // sequencer: Sequencer<Transaction<O>>,
-    weak_replication: WeakReplication<ShadowOp<O>>,
+    causal_replication: CausalReplication<ShadowOp<O>>,
     /// is Some(seq), if this replica holds the unique red token
     next_red_sequence: Arc<Mutex<Option<usize>>>,
     /// Strong client requests wait here for transaction completion.
@@ -39,7 +39,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
         match msg.component {
             Component::Sequencer => unreachable!(),
             Component::WeakReplication => {
-                self.weak_replication.handle_msg(from, msg.payload).await;
+                self.causal_replication.handle_msg(from, msg.payload).await;
             },
             Component::Protocol => {
                 let TokenPass { next_red_sequence } = bincode::deserialize(&msg.payload).unwrap();
@@ -59,7 +59,7 @@ impl<O: Operation> Gemini<O> {
     pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
-        let (weak_replication, weak_replication_events) = WeakReplication::new(network.clone()).await;
+        let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
         let my_id = network.my_id().await;
         let seq = if my_id.0 == 1 {
             Some(0)
@@ -69,14 +69,14 @@ impl<O: Operation> Gemini<O> {
         let proto = Arc::new(Self {
             network: network.clone(),
             storage,
-            weak_replication,
+            causal_replication,
             next_red_sequence: Arc::new(Mutex::new(seq)),
             waiting_red_clients: Default::default(),
             waiting_red_ops: Default::default(),
         });
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
-            weak_replication_events,
+            causal_replication_events,
             api,
         ));
         if seq != None {
@@ -153,7 +153,7 @@ impl<O: Operation> Gemini<O> {
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut weak_replication_events: Receiver<WeakEvent<ShadowOp<O>>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<ShadowOp<O>>>,
         api: Box<dyn API<O>>,
     ) {
         let (red_sender, mut red_receiver) = mpsc::channel(8000);
@@ -170,7 +170,7 @@ impl<O: Operation> Gemini<O> {
                         let result = if let Some(shadow) = proto.storage.generate_shadow(query).await {
                             if shadow.is_writing() {
                                 let tagged_op = ShadowOp::Blue(shadow.clone());
-                                proto.weak_replication.replicate(tagged_op).await;
+                                proto.causal_replication.replicate(tagged_op).await;
                             }
                             proto.storage.exec(shadow).await
                         } else {
@@ -191,7 +191,7 @@ impl<O: Operation> Gemini<O> {
                 // wait here until we hold red token
                 if let Some((seq, shadow)) = proto.sequence_red(query).await {
                     proto.waiting_red_clients.lock().await.insert(seq, result_sender);
-                    proto.weak_replication.replicate(shadow.clone()).await;
+                    proto.causal_replication.replicate(shadow.clone()).await;
                     proto.process_red_shadow_op(shadow).await;
                 } else {
                     let _ = result_sender.send(QueryResult { value: None });
@@ -201,10 +201,10 @@ impl<O: Operation> Gemini<O> {
         let proto = self.clone();
         tokio::spawn(async move {
             loop {
-                let e = weak_replication_events.recv().await.unwrap();
+                let e = causal_replication_events.recv().await.unwrap();
                 match e {
-                    WeakEvent::QuorumReplicated(_snapshot) => (),
-                    WeakEvent::Deliver(new_op) => {
+                    CausalReplicationEvent::QuorumReplicated(_snapshot) => (),
+                    CausalReplicationEvent::Deliver(new_op) => {
                         match new_op.value {
                             ShadowOp::Blue(op) => {
                                 proto.storage.exec(op).await;

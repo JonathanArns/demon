@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use crate::{network::NodeId, weak_replication::{TaggedEntry, Snapshot}};
+use crate::{network::NodeId, causal_replication::{TaggedEntry, Snapshot}};
 use super::{QueryResult, Transaction};
 use crate::rdts::Operation;
 
@@ -22,6 +22,7 @@ pub struct Storage<O: Operation> {
     latest_transaction_snapshot_state: Arc<RwLock<O::State>>,
     /// The latest weak snapshot
     latest_weak_snapshot_state: Arc<RwLock<O::State>>,
+    latest_weak_snapshot: Arc<RwLock<Snapshot>>,
 }
 
 impl<O: Operation> Storage<O> {
@@ -29,6 +30,7 @@ impl<O: Operation> Storage<O> {
         Self {
             uncommitted_weak_ops: Default::default(),
             latest_transaction_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
+            latest_weak_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
             latest_transaction_snapshot_state: Default::default(),
             latest_weak_snapshot_state: Default::default(),
         }
@@ -39,6 +41,7 @@ impl<O: Operation> Storage<O> {
     /// To be called for all weak queries that are delivered by weak replication.
     pub async fn exec_remote_weak_query(&self, op: TaggedEntry<O>) {
         op.value.apply(&mut *self.latest_weak_snapshot_state.write().await);
+        self.latest_weak_snapshot.write().await.merge_inplace(&op.causality);
         self.uncommitted_weak_ops.write().await.push(op);
     }
 
@@ -51,19 +54,12 @@ impl<O: Operation> Storage<O> {
         // now we execute the actual query and store the write ops
         let output = op.apply(&mut state_latch);
         if op.is_writing() {
-            // compute the weak log idx that this query will get
-            let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
+            let mut snapshot = self.latest_weak_snapshot.write().await;
             let mut log_latch = self.uncommitted_weak_ops.write().await;
-            let next_op_idx = log_latch.iter()
-                .filter(|o| o.node == from)
-                .map(|o| o.idx)
-                .max()
-                .map(|idx| idx + 1)
-                .unwrap_or(snapshot_val);
+            snapshot.increment(from, 1);
             let tagged_op = TaggedEntry {
                 value: op,
-                node: from,
-                idx: next_op_idx,
+                causality: snapshot.clone(),
             };
             log_latch.push(tagged_op);
         }
@@ -74,22 +70,8 @@ impl<O: Operation> Storage<O> {
     pub async fn exec_transaction(&self, t: Transaction<O>) -> QueryResult<O> {
         // wait until all required weak ops are here
         loop {
-            {
-                let mut has_all_entries = true;
-                let snapshot_latch = self.latest_transaction_snapshot.read().await;
-                let weak_latch = self.uncommitted_weak_ops.read().await;
-                for (node, len) in t.snapshot.entries() {
-                    if snapshot_latch.get(node) >= len {
-                        continue
-                    }
-                    if let None = weak_latch.iter().find(|e| e.node == node && e.idx == len-1) {
-                        has_all_entries = false;
-                        break
-                    }
-                }
-                if has_all_entries {
-                    break
-                }
+            if !t.snapshot.greater(&*self.latest_weak_snapshot.read().await) {
+                break
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -108,7 +90,7 @@ impl<O: Operation> Storage<O> {
             let mut i = 0;
             while i < weak_latch.len() {
                 let op = &weak_latch[i];
-                if op.is_in_snapshot(&snapshot_latch) {
+                if op.causality.included_in(&snapshot_latch) {
                     op.value.apply(&mut state_latch);
                     weak_latch.remove(i);
                 } else {

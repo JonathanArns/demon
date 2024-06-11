@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, QueryResult, Transaction}, weak_replication::Snapshot};
+use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, QueryResult, Transaction}, causal_replication::Snapshot};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex}};
 use std::{collections::HashMap, sync::Arc};

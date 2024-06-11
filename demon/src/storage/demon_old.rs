@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use crate::{network::NodeId, weak_replication::{TaggedEntry, Snapshot}};
+use crate::{network::NodeId, causal_replication::{TaggedEntry, Snapshot}};
 use super::{QueryResult, Transaction};
 use crate::rdts::Operation;
 
@@ -11,6 +11,7 @@ use crate::rdts::Operation;
 pub struct Storage<O: Operation> {
     /// Weak operations that are not part of a transaction snapshot yet.
     uncommitted_weak_ops: Arc<RwLock<Vec<TaggedEntry<O>>>>,
+    latest_weak_snapshot: Arc<RwLock<Snapshot>>,
     /// The snapshot that the latest transaction was executed on.
     /// weak_logs may be truncated up to this snapshot, because we will never
     /// need to re-execute anything before this snapshot.
@@ -24,6 +25,7 @@ impl<O: Operation> Storage<O> {
         Self {
             uncommitted_weak_ops: Default::default(),
             latest_transaction_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
+            latest_weak_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
             latest_transaction_snapshot_state: Default::default(),
         }
     }
@@ -32,17 +34,16 @@ impl<O: Operation> Storage<O> {
     ///
     /// To be called for all weak queries that are delivered by weak replication.
     pub async fn exec_remote_weak_query(&self, op: TaggedEntry<O>) {
-        self.uncommitted_weak_ops.write().await.push(op);
+        self.uncommitted_weak_ops.write().await.push(op.clone());
+        self.latest_weak_snapshot.write().await.merge_inplace(&op.causality);
     }
 
     /// Executes a weak query from the client.
     /// 
     /// Returns possible read value.
     pub async fn exec_weak_query(&self, op: O, from: NodeId) -> QueryResult<O> {
-        let snapshot_val = self.latest_transaction_snapshot.read().await.get(from);
         let mut latch = self.uncommitted_weak_ops.write().await;
 
-        // TODO: is this correct? since we have locked the weak ops...
         let mut state = self.latest_transaction_snapshot_state.read().await.clone(); // TODO: execute on the correct state
         for op in latch.iter().filter(|o| o.value.is_conflicting(&op)) {
             op.value.apply(&mut state);
@@ -51,17 +52,12 @@ impl<O: Operation> Storage<O> {
         // now we execute the actual query and store the write ops
         let output = op.apply(&mut state);
         if op.is_writing() {
+            let mut snapshot = self.latest_weak_snapshot.write().await;
+            snapshot.increment(from, 1);
             // compute the weak log idx that the first write operation in this query will get
-            let next_op_idx = latch.iter()
-                .filter(|o| o.node == from)
-                .map(|o| o.idx)
-                .max()
-                .map(|idx| idx + 1)
-                .unwrap_or(snapshot_val);
             let tagged_op = TaggedEntry {
                 value: op,
-                node: from,
-                idx: next_op_idx,
+                causality: snapshot.clone(),
             };
             latch.push(tagged_op);
         }
@@ -72,25 +68,12 @@ impl<O: Operation> Storage<O> {
     pub async fn exec_transaction(&self, t: Transaction<O>) -> QueryResult<O> {
         // wait until all required weak ops are here
         loop {
-            {
-                let mut has_all_entries = true;
-                let weak_latch = self.uncommitted_weak_ops.read().await;
-                let snapshot_latch = self.latest_transaction_snapshot.read().await;
-                for (node, len) in t.snapshot.entries() {
-                    if snapshot_latch.get(node) >= len {
-                        continue
-                    }
-                    if let None = weak_latch.iter().find(|e| e.node == node && e.idx == len-1) {
-                        has_all_entries = false;
-                        break
-                    }
-                }
-                if has_all_entries {
-                    break
-                }
+            if !t.snapshot.greater(&*self.latest_weak_snapshot.read().await) {
+                break
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+
         let mut snapshot_latch = self.latest_transaction_snapshot.write().await;
         snapshot_latch.merge_inplace(&t.snapshot);
 
@@ -100,7 +83,7 @@ impl<O: Operation> Storage<O> {
         let mut i = 0;
         while i < weak_latch.len() {
             let op = &weak_latch[i];
-            if op.is_in_snapshot(&snapshot_latch) {
+            if op.causality.included_in(&snapshot_latch) {
                 op.value.apply(&mut state_latch);
                 weak_latch.remove(i);
             } else {

@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use crate::{network::NodeId, weak_replication::{TaggedEntry, Snapshot}};
+use crate::{network::NodeId, causal_replication::{TaggedEntry, Snapshot}};
 use super::{QueryResult, Transaction};
 use crate::rdts::Operation;
 
@@ -44,20 +44,16 @@ impl<O: Operation> Storage<O> {
     /// Executes a blue query.
     /// 
     /// Returns possible read value.
-    pub async fn exec_blue_shadow(&self, op: O, from: NodeId) -> QueryResult<O> {
+    pub async fn exec_blue_shadow(&self, op: O, causality: Snapshot) -> QueryResult<O> {
         let mut state_latch = self.state.write().await;
         let output = op.apply(&mut state_latch);
         if op.is_writing() {
             // compute the weak log idx that this query will get
             let mut snapshot_latch = self.state_snapshot.write().await;
-            let next_op_idx = snapshot_latch.get(from);
-            snapshot_latch.increment(from, 1);
-            let tagged_op = TaggedEntry {
-                value: op,
-                node: from,
-                idx: next_op_idx,
-            };
-            self.uncommitted_blue_ops.write().await.push(tagged_op);
+            snapshot_latch.merge_inplace(&causality);
+            self.uncommitted_blue_ops.write().await.push(
+                TaggedEntry { causality, value: op }
+            );
         }
         QueryResult{ value: output }
     }
@@ -87,7 +83,7 @@ impl<O: Operation> Storage<O> {
             let mut i = 0;
             while i < uncommitted_blue_ops.len() {
                 let op = &uncommitted_blue_ops[i];
-                if op.is_in_snapshot(&red_shadow_snapshot) {
+                if op.causality.included_in(&red_shadow_snapshot) {
                     op.value.apply(&mut red_shadow_state);
                     uncommitted_blue_ops.remove(i);
                 } else {
