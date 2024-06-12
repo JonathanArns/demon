@@ -351,7 +351,7 @@ def start_servers(cluster_config, nodes):
                 root_addr = f"{node['internal_ip']}:{node['internal_port']}"
         else:
             config["addr"] = root_addr
-        requests.post(f"http://{node['ip']}:{node['control_port']}/start", json=config)
+        requests.post(f"http://{node['ip']}:{node['control_port']}/start", json=config, timeout=3)
 
     time.sleep(1)
 
@@ -380,7 +380,7 @@ def measure_rtt_latency(nodes):
 
     latencies = {}
     for id, node in nodes.items():
-        resp = requests.get(f"http://{node['ip']}:{node['db_port']}/measure_rtt_latency")
+        resp = requests.get(f"http://{node['ip']}:{node['db_port']}/measure_rtt_latency", timeout=10)
         measurements = resp.json()
         latencies[id] = {}
         for item in measurements:

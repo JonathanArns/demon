@@ -282,7 +282,7 @@ impl<O: Operation> Unistore<O> {
                                     let op = &waiting_blue_ops[i];
                                     if transaction_count >= op.value.transaction_count {
                                         let op = waiting_blue_ops.remove(i);
-                                        proto.storage.exec_blue_remote(op.value.op, &op.causality).await;
+                                        proto.storage.exec_blue_remote(op.value.op, op.from).await;
                                     } else {
                                         i += 1;
                                     }
@@ -291,7 +291,7 @@ impl<O: Operation> Unistore<O> {
                                 if new_op.value.transaction_count > transaction_count {
                                     waiting_blue_ops.push(new_op);
                                 } else {
-                                    proto.storage.exec_blue_remote(new_op.value.op, &new_op.causality).await;
+                                    proto.storage.exec_blue_remote(new_op.value.op, new_op.from).await;
                                 }
                             },
                             CausalReplicationEvent::QuorumReplicated(snapshot) => {
@@ -307,7 +307,7 @@ impl<O: Operation> Unistore<O> {
                             let op = &waiting_blue_ops[i];
                             if transaction_count >= op.value.transaction_count {
                                 let op = waiting_blue_ops.remove(i);
-                                proto.storage.exec_blue_remote(op.value.op, &op.causality).await;
+                                proto.storage.exec_blue_remote(op.value.op, op.from).await;
                             } else {
                                 i += 1;
                             }

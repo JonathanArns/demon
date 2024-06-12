@@ -41,7 +41,7 @@ impl<O: Operation> Storage<O> {
     /// To be called for all weak queries that are delivered by weak replication.
     pub async fn exec_remote_weak_query(&self, op: TaggedEntry<O>) {
         op.value.apply(&mut *self.latest_weak_snapshot_state.write().await);
-        self.latest_weak_snapshot.write().await.merge_inplace(&op.causality);
+        self.latest_weak_snapshot.write().await.increment(op.from, 1);
         self.uncommitted_weak_ops.write().await.push(op);
     }
 
@@ -56,11 +56,12 @@ impl<O: Operation> Storage<O> {
         if op.is_writing() {
             let mut snapshot = self.latest_weak_snapshot.write().await;
             let mut log_latch = self.uncommitted_weak_ops.write().await;
-            snapshot.increment(from, 1);
             let tagged_op = TaggedEntry {
                 value: op,
+                from,
                 causality: snapshot.clone(),
             };
+            snapshot.increment(from, 1);
             log_latch.push(tagged_op);
         }
         QueryResult{ value: output }

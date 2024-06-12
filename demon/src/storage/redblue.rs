@@ -30,11 +30,11 @@ impl<O: Operation> Storage<O> {
     }
 
     /// Executes a blue operation.
-    pub async fn exec_blue_remote(&self, op: O, causality: &Snapshot) -> QueryResult<O> {
+    pub async fn exec_blue_remote(&self, op: O, from: NodeId) -> QueryResult<O> {
         let mut snapshot = self.current_snapshot.write().await;
         let output = op.apply(&mut *self.state.write().await);
         if op.is_writing() {
-            snapshot.merge_inplace(causality);
+            snapshot.increment(from, 1);
         }
         QueryResult{ value: output }
     }

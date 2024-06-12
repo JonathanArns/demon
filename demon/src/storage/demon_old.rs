@@ -35,7 +35,7 @@ impl<O: Operation> Storage<O> {
     /// To be called for all weak queries that are delivered by weak replication.
     pub async fn exec_remote_weak_query(&self, op: TaggedEntry<O>) {
         self.uncommitted_weak_ops.write().await.push(op.clone());
-        self.latest_weak_snapshot.write().await.merge_inplace(&op.causality);
+        self.latest_weak_snapshot.write().await.increment(op.from, 1);
     }
 
     /// Executes a weak query from the client.
@@ -53,12 +53,13 @@ impl<O: Operation> Storage<O> {
         let output = op.apply(&mut state);
         if op.is_writing() {
             let mut snapshot = self.latest_weak_snapshot.write().await;
-            snapshot.increment(from, 1);
             // compute the weak log idx that the first write operation in this query will get
             let tagged_op = TaggedEntry {
                 value: op,
+                from,
                 causality: snapshot.clone(),
             };
+            snapshot.increment(from, 1);
             latch.push(tagged_op);
         }
         QueryResult{ value: output }

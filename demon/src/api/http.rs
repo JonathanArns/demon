@@ -134,6 +134,7 @@ async fn run_client<O: Operation>(
     watcher.wait_for(|v| *v).await?;
     watcher.mark_unchanged();
     loop {
+        tokio::time::sleep(Duration::from_millis(1)).await;
         let query = O::gen_query(&settings);
         let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();

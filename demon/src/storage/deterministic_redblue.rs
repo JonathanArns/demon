@@ -44,16 +44,16 @@ impl<O: Operation> Storage<O> {
     /// Executes a blue query.
     /// 
     /// Returns possible read value.
-    pub async fn exec_blue_shadow(&self, op: O, causality: Snapshot) -> QueryResult<O> {
+    pub async fn exec_blue_shadow(&self, op: O, causality: Snapshot, from: NodeId) -> QueryResult<O> {
         let mut state_latch = self.state.write().await;
         let output = op.apply(&mut state_latch);
         if op.is_writing() {
             // compute the weak log idx that this query will get
             let mut snapshot_latch = self.state_snapshot.write().await;
-            snapshot_latch.merge_inplace(&causality);
             self.uncommitted_blue_ops.write().await.push(
-                TaggedEntry { causality, value: op }
+                TaggedEntry { causality, value: op, from }
             );
+            snapshot_latch.increment(from, 1);
         }
         QueryResult{ value: output }
     }

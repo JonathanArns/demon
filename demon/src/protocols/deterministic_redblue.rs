@@ -124,14 +124,14 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                 transaction_count: *proto.decided_transaction_count.read().await,
                             };
                             let op = proto.causal_replication.replicate(tagged_op).await;
-                            let result = proto.storage.exec_blue_shadow(op.value.op, op.causality).await;
+                            let result = proto.storage.exec_blue_shadow(op.value.op, op.causality, op.from).await;
                             let _ = result_sender.send(result);
                         } else {
                             let _ = result_sender.send(QueryResult { value: None });
                         }
                     } else {
                         // just directly execute the read-only query
-                        let result = proto.storage.exec_blue_shadow(query, Snapshot::new(&[])).await;
+                        let result = proto.storage.exec_blue_shadow(query, Snapshot::new(&[]), NodeId(0)).await;
                         let _ = result_sender.send(result);
                     }
                 }
@@ -173,7 +173,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                     let op = &waiting_blue_ops[i];
                                     if transaction_count >= op.value.transaction_count {
                                         let op = waiting_blue_ops.remove(i);
-                                        proto.storage.exec_blue_shadow(op.value.op, op.causality).await;
+                                        proto.storage.exec_blue_shadow(op.value.op, op.causality, op.from).await;
                                     } else {
                                         i += 1;
                                     }
@@ -182,7 +182,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                 if new_op.value.transaction_count > transaction_count {
                                     waiting_blue_ops.push(new_op);
                                 } else {
-                                    proto.storage.exec_blue_shadow(new_op.value.op, new_op.causality).await;
+                                    proto.storage.exec_blue_shadow(new_op.value.op, new_op.causality, new_op.from).await;
                                 }
                             },
                             CausalReplicationEvent::QuorumReplicated(snapshot) => {
@@ -198,7 +198,7 @@ impl<O: Operation> DeterministicRedBlue<O> {
                             let op = &waiting_blue_ops[i];
                             if transaction_count >= op.value.transaction_count {
                                 let op = waiting_blue_ops.remove(i);
-                                proto.storage.exec_blue_shadow(op.value.op, op.causality).await;
+                                proto.storage.exec_blue_shadow(op.value.op, op.causality, op.from).await;
                             } else {
                                 i += 1;
                             }
