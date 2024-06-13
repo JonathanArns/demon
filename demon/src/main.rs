@@ -16,7 +16,7 @@ mod protocols;
 use clap::Parser;
 
 use api::http::HttpApi;
-use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp};
+use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp, or_set::ORSetOp};
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
@@ -47,6 +47,17 @@ async fn main() {
 
     let api = Box::new(HttpApi{});
     match &args.datatype[..] {
+        "or-set" => {
+            match &args.protocol[..] {
+                "demon" => {
+                    protocols::demon::DeMon::<ORSetOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                "causal" => {
+                    protocols::causal::Causal::<ORSetOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                _ => panic!("unknown protocol {:?}", args.protocol.clone()),
+            };
+        },
         "non-neg-counter" => {
             match &args.protocol[..] {
                 "demon" => {

@@ -156,7 +156,7 @@ impl<O: Operation> DeMon<O> {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 let id = demon.generate_transaction_id().await;
                 let snapshot = demon.choose_transaction_snapshot().await;
-                let transaction = Transaction { id, snapshot, op: None };
+                let transaction = Transaction { id, snapshot, op: O::gen_periodic_strong_op() };
                 demon.sequencer.append(transaction).await;
             }
         });

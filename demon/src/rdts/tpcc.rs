@@ -41,7 +41,7 @@ pub struct ByWarehouse {
     new_orders: HashMap<(u8, usize), NewOrder>,
     /// (no_w_id, no_d_id) -> no_o_id
     new_order_index: HashMap<u8, VecDeque<usize>>,
-    /// (ol_w_id,ol_d_id,ol_o_id,ol_number) -> OrderLine
+    /// (ol_w_id,ol_d_id,ol_o_id) -> [OrderLine]
     order_lines: HashMap<(u8, usize), Vec<OrderLine>>,
     /// History
     history: Vec<History>,
@@ -438,9 +438,6 @@ impl Operation for TpccOp {
             Self::Delivery {..} => true,
             Self::NewOrder { w_id: no_w_id, .. } => {
                 match other {
-                    Self::Payment { w_id, .. } => {
-                        no_w_id == *w_id
-                    },
                     Self::Delivery { w_id, .. } => {
                         no_w_id == *w_id
                     },
@@ -455,8 +452,39 @@ impl Operation for TpccOp {
 
     fn rollback_conflicting_state(&self, source: &Self::State, target: &mut Self::State) {
         match self {
-            Self::NewOrder { w_id, .. } => {
-                *target.wh_mut(w_id) = source.wh(w_id).clone();
+            Self::NewOrder { w_id, d_id, i_ids, i_w_ids, .. } => {
+                // stock
+                for i in 0..i_ids.len() {
+                    let i_id = i_ids[i];
+                    let w_id = i_w_ids[i];
+                    target.stock.insert((w_id, i_id), source.stock.get(&(w_id, i_id)).unwrap().clone());
+                }
+
+                let source_wh = source.wh(w_id);
+                let target_wh = target.wh_mut(w_id);
+
+                // districts
+                let district = source_wh.districts.get(d_id).unwrap().clone();
+                let o_id = district.d_next_o_id - 1;
+                target_wh.districts.get_mut(d_id).unwrap().d_next_o_id = district.d_next_o_id;
+
+                // orders
+                let order = source_wh.orders.get(&(*d_id, o_id)).unwrap().clone();
+                target_wh.orders.insert((*d_id, o_id), order);
+
+                // order_lines
+                let order_lines = source_wh.order_lines.get(&(*d_id, o_id)).unwrap().clone();
+                target_wh.order_lines.insert((*d_id, o_id), order_lines);
+                
+                // new_orders
+                if source_wh.new_order_index.len() == target_wh.new_order_index.len() - 1 {
+                    let new_order = source_wh.new_orders.get(&(*d_id, o_id)).unwrap().clone();
+                    target_wh.new_order_index.get_mut(d_id).unwrap().push_back(o_id);
+                    target_wh.new_orders.insert((*d_id, o_id), new_order);
+                } else {
+                    target_wh.new_orders = source_wh.new_orders.clone();
+                    target_wh.new_order_index = source_wh.new_order_index.clone();
+                }
             },
             Self::LoadTuples { .. } => {
                 *target = source.clone();
@@ -720,6 +748,10 @@ impl Operation for TpccOp {
                         let o_id = o_ids.pop_front().unwrap();
                         let _new_order = state.wh_mut(w_id).new_orders.remove(&(d_id, o_id)).unwrap();
                         let order = state.wh_mut(w_id).orders.get_mut(&(d_id, o_id)).unwrap();
+                        if order.o_carrier_id == *o_carrier_id {
+                            // no need to re-exec from here
+                            return None
+                        }
                         order.o_carrier_id = *o_carrier_id;
                         let o_c_id = order.o_c_id;
                         let ol_total = state.wh_mut(w_id).order_lines.get_mut(&(d_id, o_id)).unwrap().iter_mut().map(|ol| {
@@ -732,7 +764,6 @@ impl Operation for TpccOp {
                         customer.c_balance += ol_total;
                     }
                 }
-                println!("Delivery {:?}", start_time.elapsed());
                 None
             },
             Self::NewOrder{
@@ -762,7 +793,7 @@ impl Operation for TpccOp {
                 let d_tax = district.d_tax;
                 let d_next_o_id = district.d_next_o_id;
                 district.d_next_o_id += 1;
-                let customer = state.wh_mut(w_id).customers.get(&(*d_id, *c_id)).unwrap();
+                let customer = state.wh(w_id).customers.get(&(*d_id, *c_id)).unwrap();
                 let c_discount = customer.c_discount;
 
                 let o_ol_cnt = i_ids.len();
@@ -842,7 +873,6 @@ impl Operation for TpccOp {
 
                 // TODO: return item_data and total
                 total *= (1.0 - c_discount) * (1.0 + w_tax + d_tax);
-                println!("NewOrder {:?}    {:?} items", start_time.elapsed(), i_ids.len());
                 None
             },
             Self::OrderStatus{
@@ -866,7 +896,6 @@ impl Operation for TpccOp {
                     vec![]
                 };
                 // TODO: return actual data
-                println!("OrderStatus {:?}", start_time.elapsed());
                 None
             },
             Self::Payment{
@@ -917,7 +946,6 @@ impl Operation for TpccOp {
                     h_data: format!("{}    {}", w_name, d_name),
                 });
 
-                println!("Payment {:?}", start_time.elapsed());
                 None
             },
             Self::StockLevel{
@@ -941,7 +969,6 @@ impl Operation for TpccOp {
                     s.s_w_id == *w_id && s.s_quantity < *threshold && item_ids.contains(&s.s_i_id)
                 }).map(|s| s.s_i_id).collect::<HashSet<_>>().len();
                 // TODO: return result
-                println!("StockLevel {:?}", start_time.elapsed());
                 None
             },
         }

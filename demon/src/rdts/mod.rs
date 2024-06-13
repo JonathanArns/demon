@@ -8,6 +8,7 @@ pub mod counters;
 pub mod rubis;
 pub mod tpcc;
 pub mod non_negative_counter;
+pub mod or_set;
 
 /// A generic operations first approach to defining replicated data types.
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
@@ -36,4 +37,13 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     fn generate_shadow(&self, state: &Self::State) -> Option<Self>;
     /// Used to generate benchmark workloads
     fn gen_query(settings: &BenchSettings) -> Self;
+    /// Used to generate the periodic strong no-op executed by Demon.
+    fn gen_periodic_strong_op() -> Option<Self> {
+        None
+    }
+    /// Can be used as an optimization to tell DeMon that an RDT does not
+    /// observe any state for shadow op generation.
+    fn uses_state_for_shadow_generation() -> bool {
+        true
+    }
 }

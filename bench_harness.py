@@ -79,8 +79,10 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
         with open(os.path.join(output_dir, "rtt_latencies.json"), "w") as f:
             json.dump(bench_state["rtt_latencies"], f, indent=4)
     elif not silent:
-        print(tpcc_df)
-        print(micro_df)
+        if len(tpcc_df.columns) > 0:
+            print(tpcc_df[["proto", "total_throughput", "total_mean_latency", "total_count"]])
+        if len(micro_df.columns) > 0:
+            print(micro_df[["proto", "total_throughput", "total_mean_latency"]])
 
 def expand_multi_bench_config(multi_config):
     """

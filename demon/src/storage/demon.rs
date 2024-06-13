@@ -78,39 +78,48 @@ impl<O: Operation> Storage<O> {
         }
 
         // get latches
-        let mut weak_state_latch = self.latest_weak_snapshot_state.write().await;
-        let mut snapshot_latch = self.latest_transaction_snapshot.write().await;
-        let mut weak_latch = self.uncommitted_weak_ops.write().await;
-        let mut state_latch = self.latest_transaction_snapshot_state.write().await;
+        let mut weak_state = self.latest_weak_snapshot_state.write().await;
+        let mut strong_snapshot = self.latest_transaction_snapshot.write().await;
+        let weak_snapshot = self.latest_weak_snapshot.read().await;
+        let mut uncommitted_ops = self.uncommitted_weak_ops.write().await;
+        let mut strong_state = self.latest_transaction_snapshot_state.write().await;
 
-        if t.snapshot.greater(&snapshot_latch) {
+        if t.snapshot.greater(&strong_snapshot) {
             // update snapshot
-            snapshot_latch.merge_inplace(&t.snapshot);
+            strong_snapshot.merge_inplace(&t.snapshot);
 
             // update local snapshot state and filter weak ops
             let mut i = 0;
-            while i < weak_latch.len() {
-                let op = &weak_latch[i];
-                if op.causality.included_in(&snapshot_latch) {
-                    op.value.apply(&mut state_latch);
-                    weak_latch.remove(i);
+            while i < uncommitted_ops.len() {
+                let op = &uncommitted_ops[i];
+                if op.causality.included_in(&strong_snapshot) {
+                    op.value.apply(&mut strong_state);
+                    uncommitted_ops.remove(i);
                 } else {
                     i += 1;
                 }
             }
         }
 
+
         // execute the transaction
         let output = if let Some(op) = t.op {
-            let output = op.apply(&mut state_latch);
+            let output = op.apply(&mut strong_state);
 
-            // update weak snapshot state
-            op.rollback_conflicting_state(&state_latch, &mut weak_state_latch);
-            for weak in weak_latch.iter() {
-                if op.is_conflicting(&weak.value) {
-                    weak.value.apply(&mut weak_state_latch);
+            let weak_is_ahead = weak_snapshot.greater(&strong_snapshot);
+            if weak_is_ahead {
+                // update weak snapshot state
+                op.rollback_conflicting_state(&strong_state, &mut weak_state);
+                for weak in uncommitted_ops.iter() {
+                    if op.is_conflicting(&weak.value) {
+                        weak.value.apply(&mut weak_state);
+                    }
                 }
+            } else {
+                // if weak state is not ahead, we can just execute the strong operation on both states
+                op.apply(&mut weak_state);
             }
+
             output
         } else {
             None

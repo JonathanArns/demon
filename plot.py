@@ -5,23 +5,27 @@ import pandas as pd
 
 
 def plot_tpcc(df, dir_path):
-    protocols = df["proto"].unique()
-    plt.figure(figsize=(10, 6))  # Adjust size as needed
-    for proto in protocols:
-        proto_df = df[df["proto"] == proto]
-        plt.plot(proto_df["total_throughput"] * proto_df["num_clients"], proto_df["total_mean_latency"], marker="o", label=proto)
-    plt.xlabel("throughput (txns/s)")
-    plt.ylabel("mean latency (ms)")
-    plt.title(f"TPCC latency by throughput")
-    plt.legend()
-    plt.savefig(os.path.join(dir_path, f"tpcc_plot.png"), dpi=300)
+    for cluster_size in df["cluster_size"].unique():
+        cluster_df = df[df["cluster_size"] == cluster_size]
+        protocols = cluster_df["proto"].unique()
+        plt.figure(figsize=(10, 6))  # Adjust size as needed
+        for proto in protocols:
+            proto_df = cluster_df[cluster_df["proto"] == proto]
+            plt.plot(proto_df["total_throughput"], proto_df["total_mean_latency"], marker="o", label=proto)
+        plt.xlabel("throughput (txns/s)")
+        plt.ylabel("mean latency (ms)")
+        plt.title(f"TPCC latency by throughput ({cluster_size} replicas)")
+        plt.legend()
+        plt.savefig(os.path.join(dir_path, f"tpcc_plot_{cluster_size}_nodes.png"), dpi=300)
 
 def plot_micro(df, dir_path):
-    datatypes = df["datatype"].unique()
-    for dtype in datatypes:
-        plot_single_micro(df[df["datatype"] == dtype], dtype, dir_path)
+    for cluster_size in df["cluster_size"].unique():
+        cluster_df = df[df["cluster_size"] == cluster_size]
+        datatypes = cluster_df["datatype"].unique()
+        for dtype in datatypes:
+            plot_single_micro(cluster_df[cluster_df["datatype"] == dtype], dtype, cluster_size, dir_path)
 
-def plot_single_micro(df, datatype, dir_path):
+def plot_single_micro(df, datatype, cluster_size, dir_path):
     protocols = df["proto"].unique()
     # aggregate the data
     mean_latencies = {}
@@ -42,7 +46,7 @@ def plot_single_micro(df, datatype, dir_path):
         }
 
     plt.figure(figsize=(10, 6))  # Adjust size as needed
-    # plt.suptitle('non-negative counter (3 replicas, 20ms round-trip between replicas, 10 clients per replica)')
+    plt.suptitle(f"{datatype} with {cluster_size} replicas")
 
     plt.subplot(1, 2, 1)
     for proto, vals in mean_latencies.items():
@@ -61,7 +65,7 @@ def plot_single_micro(df, datatype, dir_path):
     plt.title(f"{datatype} max throughput")
     plt.legend()
 
-    plt.savefig(os.path.join(dir_path, f"{datatype}_plot.png"), dpi=300)
+    plt.savefig(os.path.join(dir_path, f"{datatype}_plot_{cluster_size}_nodes.png"), dpi=300)
     
 
 if __name__ == "__main__":

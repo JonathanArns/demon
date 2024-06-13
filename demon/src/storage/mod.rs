@@ -3,10 +3,9 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use omnipaxos::storage::{Entry, NoSnapshot};
 
-use crate::{protocols::TransactionId, rdts::Operation, causal_replication::Snapshot};
+use crate::{causal_replication::Snapshot, protocols::TransactionId, rdts::Operation};
 
 pub mod demon;
-pub mod demon_old;
 pub mod basic;
 pub mod redblue;
 pub mod deterministic_redblue;
