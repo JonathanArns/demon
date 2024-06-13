@@ -45,6 +45,7 @@ async fn query_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
         },
         // request timeout
         _ = tokio::time::sleep(Duration::from_secs(5)) => {
+            println!("ABORTED  {}", &body[0..(body.len().min(50))]);
             Err(StatusCode::INTERNAL_SERVER_ERROR)?
         },
     };
