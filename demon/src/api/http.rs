@@ -110,7 +110,7 @@ async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
         measurements.extend_from_slice(&data);
     }
 
-    let mut latencies = measurements.iter().map(|m| m.latency.as_micros() as f64 * 1000.0).collect::<Vec<_>>();
+    let mut latencies = measurements.iter().map(|m| m.latency.as_micros() as f64 / 1000.0).collect::<Vec<_>>();
     latencies.sort_by_key(|x| (x * 1000.0) as usize);
     let p99 = &latencies[((latencies.len() as f64 * 0.99) as usize)..latencies.len()];
     let p95 = &latencies[((latencies.len() as f64 * 0.95) as usize)..latencies.len()];
