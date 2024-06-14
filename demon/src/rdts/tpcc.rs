@@ -418,8 +418,12 @@ impl Operation for TpccOp {
 
     fn is_por_conflicting(&self, other: &Self) -> bool {
         match *self {
-            Self::Delivery{..} | Self::NewOrder {..} => match *other {
-                Self::Delivery{..} | Self::NewOrder {..} => true,
+            Self::NewOrder {w_id, ..} => match *other {
+                Self::Delivery{w_id: o_w_id, ..} | Self::NewOrder {w_id: o_w_id, ..} => w_id == o_w_id,
+                _ => false,
+            },
+            Self::Delivery{w_id, ..} => match *other {
+                Self::NewOrder {w_id: o_w_id, ..} => w_id == o_w_id,
                 _ => false,
             },
             Self::LoadTuples {..} => false,
