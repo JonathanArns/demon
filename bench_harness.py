@@ -245,6 +245,9 @@ def run_bench(bench_config, nodes, silent=False):
                     output = requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json={"cmd": " ".join(command + ["--no-execute"])}).json()
                     if not silent and len(output["std_err"]) > 0:
                         print(f"STDOUT:\n{output['std_out']}\nSTDERR:\n{output['std_err']}")
+                    if "Failed to load" in output["std_err"]:
+                        raise Exception("failed to load TPCC data")
+
                     time.sleep(1)
                 else:
                     if not silent:
@@ -289,6 +292,7 @@ def run_bench(bench_config, nodes, silent=False):
         except Exception as e:
             print(f"retrying bench after exception: {e}")
             stop_servers(bench_config["cluster_config"], nodes)
+            sleep(5)
             start_servers(bench_config["cluster_config"], nodes)
             reconfigured = True
 

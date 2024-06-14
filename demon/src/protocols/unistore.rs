@@ -211,8 +211,7 @@ impl<O: Operation> Unistore<O> {
                                 if !check_now || !may_commit {
                                     let mut waiting_transactions = proto.waiting_transactions.lock().await;
                                     if let Some((sender, retry_counter)) = waiting_transactions.remove(&transaction.id) {
-                                        if retry_counter >= 9 {
-                                            // we cancel a transaction after 10 failed commit attempts
+                                        if retry_counter >= 50 {
                                             drop(sender);
                                             continue
                                         }
