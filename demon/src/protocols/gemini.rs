@@ -47,7 +47,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
                 tokio::task::spawn(Self::forward_token_after_duration(
                     self.next_red_sequence.clone(),
                     self.network.clone(),
-                    Duration::from_millis(5)
+                    Duration::from_millis(50)
                 ));
             }
         }
