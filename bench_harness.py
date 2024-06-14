@@ -18,7 +18,7 @@ def run_bench_loop(path):
         print(f"ran {counter} times")
         counter += 1
 
-def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False, latencies=True, forget_protos=[]):
+def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False, latencies=True, forget_protos=[], always_load=False):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
     Then executes every benchmark configuration.
@@ -57,7 +57,7 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             repr = json.dumps(bench_config, sort_keys=True)
             if repr in bench_state["finished_benches"]:
                 continue
-            output = run_bench(bench_config, nodes, silent)
+            output = run_bench(bench_config, nodes, silent, always_load)
             bench_state["finished_benches"].append(repr)
             if output is not None:
                 if "tpcc" == bench_config["type"]:
@@ -167,7 +167,7 @@ def run_tpcc(args):
         return None
 
 previous_tpcc_settings = None
-def run_bench(bench_config, nodes, silent=False):
+def run_bench(bench_config, nodes, silent=False, always_load=False):
     """
     Runs a benchmark according to the specified config.
 
@@ -221,13 +221,13 @@ def run_bench(bench_config, nodes, silent=False):
                 command = ["python", "/workspace/py-tpcc/pytpcc/tpcc.py", "demon",
                         "--config", "/workspace/demon_driver.conf",
                         "--scalefactor", scalefactor,
-                        "--clients", num_clients,
                         "--warehouses", warehouses,
                         "--duration", duration]
 
                 load = True
                 if not reconfigured:
-                    if previous_tpcc_settings is not None \
+                    if not always_load \
+                        and previous_tpcc_settings is not None \
                         and str(previous_tpcc_settings["scalefactor"]) == scalefactor \
                         and str(previous_tpcc_settings["warehouses"]) == warehouses:
                         # we can re-use the data from the previous tpcc run
@@ -242,7 +242,7 @@ def run_bench(bench_config, nodes, silent=False):
                     if not silent:
                         print("loading tpcc data")
                     node = nodes[bench_config["cluster_config"]["node_ids"][0]]
-                    output = requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json={"cmd": " ".join(command + ["--no-execute"])}).json()
+                    output = requests.post(f"http://{node['ip']}:{node['control_port']}/run_cmd", json={"cmd": " ".join(command + ["--no-execute", "--clients", "4"])}).json()
                     if not silent and len(output["std_err"]) > 0:
                         print(f"STDOUT:\n{output['std_out']}\nSTDERR:\n{output['std_err']}")
                     if "Failed to load" in output["std_err"]:
@@ -255,7 +255,7 @@ def run_bench(bench_config, nodes, silent=False):
 
                 # now execute in threadpool
                 print("executing tpcc bench")
-                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['control_port']}", {"cmd": " ".join(command + ["--no-load"])}, 2 * settings["duration"]) for id in bench_config["cluster_config"]["node_ids"]]
+                args = [(id, f"{nodes[id]['ip']}:{nodes[id]['control_port']}", {"cmd": " ".join(command + ["--no-load", "--clients", num_clients])}, 2 * settings["duration"]) for id in bench_config["cluster_config"]["node_ids"]]
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_tpcc, args)
                 if None in results:
@@ -292,7 +292,7 @@ def run_bench(bench_config, nodes, silent=False):
         except Exception as e:
             print(f"retrying bench after exception: {e}")
             stop_servers(bench_config["cluster_config"], nodes)
-            sleep(5)
+            time.sleep(5)
             start_servers(bench_config["cluster_config"], nodes)
             reconfigured = True
 
@@ -410,6 +410,7 @@ if __name__ == "__main__":
     output_dir = "./experiment_output"
     forget = []
     loop = False
+    always_load = False
     if "--no-write" in args:
         args.remove("--no-write")
         write_output = False
@@ -421,17 +422,20 @@ if __name__ == "__main__":
         idx = args.index("-o")
         args.pop(idx)
         output_dir = args.pop(idx)
-    if "--forget-proto" in args:
+    while "--forget-proto" in args:
         idx = args.index("--forget-proto")
         args.pop(idx)
         forget.append(args.pop(idx))
-    if "-f" in args:
+    while "-f" in args:
         idx = args.index("-f")
         args.pop(idx)
         forget.append(args.pop(idx))
     if "--loop" in args:
         args.remove("--loop")
         loop = True
+    if "--always-load" in args:
+        args.remove("--always-load")
+        always_load = True
 
     if len(args) < 1:
         print("argument required to specify input file")
@@ -441,4 +445,4 @@ if __name__ == "__main__":
     if loop:
         run_bench_loop(path)
     else:
-        run_benches_from_file(path, write_output=write_output, output_dir=output_dir, forget_protos=forget)
+        run_benches_from_file(path, write_output=write_output, output_dir=output_dir, forget_protos=forget, always_load=always_load)
