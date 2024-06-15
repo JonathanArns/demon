@@ -176,7 +176,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
     global previous_tpcc_settings
     if not silent:
         print(f"running: {bench_config}")
-    reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes)
+    reconfigured = ensure_cluster_state(bench_config["cluster_config"], nodes, always_load)
     while True:
         try:
             time.sleep(1)
@@ -190,13 +190,19 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                 # record benchmark measurements
                 data = {
                     "total_mean_latency": 0.0,
+                    "total_p95_latency": 0.0,
+                    "total_p99_latency": 0.0,
                     "total_throughput": 0,
                 }
                 for values in results:
                     data["total_throughput"] += values["throughput"]
                     data["total_mean_latency"] += values["mean_latency"]
+                    data["total_p95_latency"] += values["p95_latency"]
+                    data["total_p99_latency"] += values["p99_latency"]
                     data[f"{values['node_id']}_throughput"] = values["throughput"]
                     data[f"{values['node_id']}_mean_latency"] = values["mean_latency"]
+                    data[f"{values['node_id']}_p95_latency"] = values["p95_latency"]
+                    data[f"{values['node_id']}_p99_latency"] = values["p99_latency"]
                 data["total_mean_latency"] /= len(results)
 
                 # record benchmark parameters
@@ -297,7 +303,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
             reconfigured = True
 
 current_cluster_config = None
-def ensure_cluster_state(cluster_config, nodes):
+def ensure_cluster_state(cluster_config, nodes, force_restart=False):
     """
     Makes sure the cluster is configured according to the arguments.
     Returns `True` if the cluster was reconfigured in the process.
@@ -305,7 +311,8 @@ def ensure_cluster_state(cluster_config, nodes):
     global current_cluster_config
     old = current_cluster_config
     new = cluster_config
-    if old is None \
+    if force_restart \
+        or old is None \
         or old["proto"] != new["proto"] \
         or old["datatype"] != new["datatype"] \
         or set(old["node_ids"]) != set(new["node_ids"]):
@@ -410,7 +417,7 @@ if __name__ == "__main__":
     output_dir = "./experiment_output"
     forget = []
     loop = False
-    always_load = False
+    always_load = True
     if "--no-write" in args:
         args.remove("--no-write")
         write_output = False
@@ -433,9 +440,9 @@ if __name__ == "__main__":
     if "--loop" in args:
         args.remove("--loop")
         loop = True
-    if "--always-load" in args:
-        args.remove("--always-load")
-        always_load = True
+    if "--reuse" in args:
+        args.remove("--reuse")
+        always_load = False
 
     if len(args) < 1:
         print("argument required to specify input file")

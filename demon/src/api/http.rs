@@ -112,14 +112,12 @@ async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
 
     let mut latencies = measurements.iter().map(|m| m.latency.as_micros() as f64 / 1000.0).collect::<Vec<_>>();
     latencies.sort_by_key(|x| (x * 1000.0) as usize);
-    let p99 = &latencies[((latencies.len() as f64 * 0.99) as usize)..latencies.len()];
-    let p95 = &latencies[((latencies.len() as f64 * 0.95) as usize)..latencies.len()];
 
     let metrics = BenchMetrics {
         throughput: measurements.len() as f64 / settings.duration as f64,
         mean_latency: latencies.iter().sum::<f64>() / latencies.len() as f64,
-        p99_latency: p99.iter().sum::<f64>() / p99.len() as f64,
-        p95_latency: p95.iter().sum::<f64>() / p95.len() as f64,
+        p99_latency: latencies[(latencies.len() as f64 * 0.99) as usize],
+        p95_latency: latencies[(latencies.len() as f64 * 0.95) as usize],
     };
     Ok(Json(metrics))
 }
