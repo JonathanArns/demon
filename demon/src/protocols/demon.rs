@@ -95,11 +95,14 @@ impl<O: Operation> DeMon<O> {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_semiserializable_strong() {
                     // strong operation
-                    let id = demon.generate_transaction_id().await;
-                    let snapshot = demon.choose_transaction_snapshot().await;
-                    let transaction = Transaction { id, snapshot, op: Some(query) };
-                    demon.waiting_transactions.lock().await.insert(id, result_sender);
-                    demon.sequencer.append(transaction).await;
+                    let protocol = demon.clone();
+                    tokio::task::spawn(async move {
+                        let id = protocol.generate_transaction_id().await;
+                        let snapshot = protocol.choose_transaction_snapshot().await;
+                        let transaction = Transaction { id, snapshot, op: Some(query) };
+                        protocol.waiting_transactions.lock().await.insert(id, result_sender);
+                        protocol.sequencer.append(transaction).await;
+                    });
                 } else {
                     // weak operation
                     if query.is_writing() {
