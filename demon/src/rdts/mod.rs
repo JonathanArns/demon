@@ -5,7 +5,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use crate::api::http::BenchSettings;
 
 pub mod counters;
-pub mod rubis;
+pub mod rubis_rdt;
 pub mod tpcc;
 pub mod non_negative_counter;
 pub mod or_set;
@@ -14,6 +14,7 @@ pub mod or_set;
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
     type State: Default + Clone + Sync + Send;
     type ReadVal: Clone + Serialize + Debug + Sync + Send;
+    type QueryState: Default + Send;
 
     /// Parse a query string to an operation, or return None for bad queries.
     fn parse(text: &str) -> anyhow::Result<Self>;
@@ -36,7 +37,8 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Used to turn client operations into shadow operations.
     fn generate_shadow(&self, state: &Self::State) -> Option<Self>;
     /// Used to generate benchmark workloads
-    fn gen_query(settings: &BenchSettings) -> Self;
+    fn gen_query(settings: &BenchSettings, state: &mut Self::QueryState) -> Self;
+    fn update_query_state(state: &mut Self::QueryState, val: Self::ReadVal) {}
     /// Used to generate the periodic strong no-op executed by Demon.
     fn gen_periodic_strong_op() -> Option<Self> {
         None

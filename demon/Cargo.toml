@@ -1,6 +1,6 @@
 [package]
 name = "demon"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2021"
 
 [dependencies]
@@ -16,3 +16,4 @@ axum = "0.7"
 async-trait = "0.1"
 omnipaxos = { version = "0.2.2", features = ["serde"] }
 omnipaxos_storage = "0.2.2"
+indexmap = "2"

@@ -382,6 +382,7 @@ pub enum TpccOp {
 impl Operation for TpccOp {
     type State = DB;
     type ReadVal = ();
+    type QueryState = ();
 
     fn is_red(&self) -> bool {
         match *self {
@@ -989,7 +990,7 @@ impl Operation for TpccOp {
         }
     }
 
-    fn gen_query(_settings: &crate::api::http::BenchSettings) -> Self {
+    fn gen_query(_settings: &crate::api::http::BenchSettings, _state: &mut Self::QueryState) -> Self {
         unimplemented!("please use the py-tpcc driver implementation")
     }
 }

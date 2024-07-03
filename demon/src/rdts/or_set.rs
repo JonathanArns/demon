@@ -35,6 +35,7 @@ impl Operation for ORSetOp {
     type State = ORSet;
     /// The set's logical and physical size.
     type ReadVal = (u64, u64);
+    type QueryState = ();
 
     fn is_red(&self) -> bool {
         false
@@ -124,7 +125,7 @@ impl Operation for ORSetOp {
         Some(Self::Compact)
     }
 
-    fn gen_query(settings: &crate::api::http::BenchSettings) -> Self {
+    fn gen_query(settings: &crate::api::http::BenchSettings, _state: &mut Self::QueryState) -> Self {
         let mut rng = thread_rng();
         let item = rng.gen_range(0..(settings.key_range as u64));
         if rng.gen_bool(settings.strong_ratio) {

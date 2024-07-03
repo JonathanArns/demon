@@ -132,15 +132,19 @@ async fn run_client<O: Operation>(
     // wait for the benchmark to start
     watcher.wait_for(|v| *v).await?;
     watcher.mark_unchanged();
+    let mut query_state = O::QueryState::default();
     loop {
         tokio::time::sleep(Duration::from_millis(1)).await;
-        let query = O::gen_query(&settings);
+        let query = O::gen_query(&settings, &mut query_state);
         let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();
         query_sender.send((query, result_sender)).await?;
         select! {
             res = result_receiver => {
-                if res.is_ok() {
+                if let Ok(res) = res {
+                    if let Some(val) = res.value {
+                        O::update_query_state(&mut query_state, val);
+                    }
                     measurements.push(Measurement{latency: start_time.elapsed()});
                 }
             },

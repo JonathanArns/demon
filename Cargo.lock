@@ -344,7 +344,7 @@ checksum = "248e3bacc7dc6baa3b21e405ee045c3047101a49145e7e9eca583ab4c2ca5345"
 
 [[package]]
 name = "demon"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -352,6 +352,7 @@ dependencies = [
  "bincode",
  "clap",
  "futures",
+ "indexmap",
  "omnipaxos",
  "omnipaxos_storage",
  "rand",

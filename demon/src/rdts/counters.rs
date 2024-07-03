@@ -31,6 +31,7 @@ impl CounterOp {
 impl Operation for CounterOp {
     type State = HashMap<Key, Value>;
     type ReadVal = Option<Value>;
+    type QueryState = ();
 
     fn is_red(&self) -> bool {
         match *self {
@@ -144,7 +145,7 @@ impl Operation for CounterOp {
         }
     }
 
-    fn gen_query(settings: &crate::api::http::BenchSettings) -> Self {
+    fn gen_query(settings: &crate::api::http::BenchSettings, _state: &mut Self::QueryState) -> Self {
         let mut rng = thread_rng();
         let key = rng.gen_range(0..settings.key_range) as Key;
         let read_ops = [Self::Read{key}];
