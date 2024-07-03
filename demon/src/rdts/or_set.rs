@@ -124,6 +124,15 @@ impl Operation for ORSetOp {
     fn gen_periodic_strong_op() -> Option<Self> {
         Some(Self::Compact)
     }
+    
+    fn name(&self) -> String {
+        match *self {
+            Self::Compact {..} => "Compact",
+            Self::Insert {..} => "Insert",
+            Self::Remove {..} => "Remove",
+            _ => "",
+        }.to_string()
+    }
 
     fn gen_query(settings: &crate::api::http::BenchSettings, _state: &mut Self::QueryState) -> Self {
         let mut rng = thread_rng();

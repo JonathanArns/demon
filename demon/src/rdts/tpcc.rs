@@ -989,6 +989,17 @@ impl Operation for TpccOp {
             Self::StockLevel {..} => None,
         }
     }
+    
+    fn name(&self) -> String {
+        match *self {
+            Self::LoadTuples {..} => "LoadTuples",
+            Self::Delivery {..} => "Delivery",
+            Self::NewOrder {..} => "NewOrder",
+            Self::Payment {..} => "Payment",
+            Self::OrderStatus {..} => "OrderStatus",
+            Self::StockLevel {..} => "StockLevel",
+        }.to_string()
+    }
 
     fn gen_query(_settings: &crate::api::http::BenchSettings, _state: &mut Self::QueryState) -> Self {
         unimplemented!("please use the py-tpcc driver implementation")

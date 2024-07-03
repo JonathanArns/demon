@@ -31,6 +31,14 @@ impl Operation for NonNegativeCounterOp {
     type ReadVal = Option<Value>;
     type QueryState = ();
 
+    fn name(&self) -> String {
+        match *self {
+            Self::Read {..} => "Read",
+            Self::Add {..} => "Add",
+            Self::Subtract {..} => "Subtract",
+        }.to_string()
+    }
+
     fn is_red(&self) -> bool {
         match *self {
             Self::Read{..} => false,

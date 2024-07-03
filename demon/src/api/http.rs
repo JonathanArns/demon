@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::{HashMap, HashSet}, time::Duration};
 
 use axum::{async_trait, extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,7 @@ async fn latency_endpoint<O: Operation>(State((network, _query_sender)): State<(
 #[derive(Clone, Debug)]
 struct Measurement {
     latency: Duration,
+    operation: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -87,7 +88,13 @@ struct BenchMetrics {
     pub p95_latency: f64,
 }
 
-async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchMetrics>, StatusCode> {
+#[derive(Clone, Debug, Serialize)]
+struct BenchOutput {
+    pub totals: BenchMetrics,
+    pub per_op: HashMap<String, BenchMetrics>,
+}
+
+async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchOutput>, StatusCode> {
     let (watch_sender, watcher) = watch::channel(false);
 
     // set up the clients
@@ -119,7 +126,29 @@ async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
         p99_latency: latencies[(latencies.len() as f64 * 0.99) as usize],
         p95_latency: latencies[(latencies.len() as f64 * 0.95) as usize],
     };
-    Ok(Json(metrics))
+    let mut output = BenchOutput {
+        totals: metrics,
+        per_op: HashMap::new(),
+    };
+    
+    // record metrics per operation
+    let mut operations = HashSet::new();
+    for op in measurements.iter().map(|m| m.operation.clone()) {
+        operations.insert(op);
+    }
+    for op in operations {
+        let mut latencies = measurements.iter().filter(|m| m.operation == op).map(|m| m.latency.as_micros() as f64 / 1000.0).collect::<Vec<_>>();
+        latencies.sort_by_key(|x| (x * 1000.0) as usize);
+        let metrics = BenchMetrics {
+            throughput: measurements.len() as f64 / settings.duration as f64,
+            mean_latency: latencies.iter().sum::<f64>() / latencies.len() as f64,
+            p99_latency: latencies[(latencies.len() as f64 * 0.99) as usize],
+            p95_latency: latencies[(latencies.len() as f64 * 0.95) as usize],
+        };
+        output.per_op.insert(op, metrics);
+    }
+
+    Ok(Json(output))
 }
 
 async fn run_client<O: Operation>(
@@ -136,6 +165,7 @@ async fn run_client<O: Operation>(
     loop {
         tokio::time::sleep(Duration::from_millis(1)).await;
         let query = O::gen_query(&settings, &mut query_state);
+        let op_name = query.name();
         let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();
         query_sender.send((query, result_sender)).await?;
@@ -145,7 +175,7 @@ async fn run_client<O: Operation>(
                     if let Some(val) = res.value {
                         O::update_query_state(&mut query_state, val);
                     }
-                    measurements.push(Measurement{latency: start_time.elapsed()});
+                    measurements.push(Measurement{latency: start_time.elapsed(), operation: op_name });
                 }
             },
             // request timeout

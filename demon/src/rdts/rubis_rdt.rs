@@ -203,6 +203,19 @@ impl Operation for RubisOp {
         }
     }
 
+    fn name(&self) -> String {
+        match *self {
+            Self::RegisterUser {..} => "RegisterUser",
+            Self::GetAuction => "GetAuction",
+            Self::OpenAuction {..} => "OpenAuction",
+            Self::CloseAuction {..} => "CloseAuction",
+            Self::Bid {..} => "Bid",
+            Self::GetItem => "GetItem",
+            Self::Sell {..} => "Sell",
+            Self::BuyNow {..} => "BuyNow",
+        }.to_string()
+    }
+
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
         match *self {
             Self::RegisterUser { ref username } => {

@@ -39,6 +39,8 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Used to generate benchmark workloads
     fn gen_query(settings: &BenchSettings, state: &mut Self::QueryState) -> Self;
     fn update_query_state(state: &mut Self::QueryState, val: Self::ReadVal) {}
+    /// Used to record operation names in measurements.
+    fn name(&self) -> String;
     /// Used to generate the periodic strong no-op executed by Demon.
     fn gen_periodic_strong_op() -> Option<Self> {
         None

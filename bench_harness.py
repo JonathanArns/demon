@@ -195,14 +195,25 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                     "total_throughput": 0,
                 }
                 for values in results:
-                    data["total_throughput"] += values["throughput"]
-                    data["total_mean_latency"] += values["mean_latency"]
-                    data["total_p95_latency"] += values["p95_latency"]
-                    data["total_p99_latency"] += values["p99_latency"]
-                    data[f"{values['node_id']}_throughput"] = values["throughput"]
-                    data[f"{values['node_id']}_mean_latency"] = values["mean_latency"]
-                    data[f"{values['node_id']}_p95_latency"] = values["p95_latency"]
-                    data[f"{values['node_id']}_p99_latency"] = values["p99_latency"]
+                    data["total_throughput"] += values["totals"]["throughput"]
+                    data["total_mean_latency"] += values["totals"]["mean_latency"]
+                    data["total_p95_latency"] += values["totals"]["p95_latency"]
+                    data["total_p99_latency"] += values["totals"]["p99_latency"]
+                    data[f"{values['node_id']}_throughput"] = values["totals"]["throughput"]
+                    data[f"{values['node_id']}_mean_latency"] = values["totals"]["mean_latency"]
+                    data[f"{values['node_id']}_p95_latency"] = values["totals"]["p95_latency"]
+                    data[f"{values['node_id']}_p99_latency"] = values["totals"]["p99_latency"]
+                    for op in values["per_op"].keys():
+                        if not f"{op}_mean_latency" in data:
+                            data[f"{op}_mean_latency"] = 0.0
+                            data[f"{op}_p95_latency"] = 0.0
+                            data[f"{op}_p99_latency"] = 0.0
+                            data[f"{op}_throughput"] = 0
+                        data[f"{op}_mean_latency"] += values["per_op"][op]["mean_latency"]
+                        data[f"{op}_p95_latency"] += values["per_op"][op]["p95_latency"]
+                        data[f"{op}_p99_latency"] += values["per_op"][op]["p99_latency"]
+                        data[f"{op}_throughput"] += values["per_op"][op]["throughput"]
+                        
                 data["total_mean_latency"] /= len(results)
 
                 # record benchmark parameters

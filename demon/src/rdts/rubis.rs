@@ -1,28 +1,126 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::anyhow;
+use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 
 use super::Operation;
 
-pub type AuctionId = u64;
-pub type Price = u64;
-pub type UserId = String;
+#[derive(Clone, Debug, Default)]
+pub struct DB {
+    categories: HashMap<usize, Category>,
+    regions: HashMap<usize, Region>,
+    users: HashMap<usize, User>,
+    user_idx: HashMap<String, usize>,
+    items: HashMap<usize, Item>,
+    old_items: HashMap<usize, Item>,
+    bids: HashMap<usize, Bid>,
+    comments: HashMap<usize, Comment>,
+    buy_now: HashMap<usize, BuyNow>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Category {
+    id: usize,
+    name: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Region {
+    id: usize,
+    name: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct User {
+    id: usize,
+    nickname: String,
+    first: String,
+    last: String,
+    password: String,
+    email: String,
+    rating: u16,
+    balance: f64,
+    creation_date: u64,
+    region_fk: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Item {
+    id: usize,
+    name: String,
+    description: String,
+    initial_price: f64,
+    quantity: usize,
+    reserve_price: f64,
+    buy_now: f64,
+    nb_of_bids: usize,
+    max_bid: f64,
+    start_date: u64,
+    end_date: u64,
+    seller_fk: usize,
+    category_fk: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Bid {
+    id: usize,
+    user_fk: usize,
+    item_fk: usize,
+    quantity: usize,
+    bid: f64,
+    max_bid: f64,
+    date: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Comment {
+    id: usize,
+    from_user_fk: usize,
+    to_user_fk: usize,
+    item_fk: usize,
+    rating: usize,
+    date: u64,
+    comment: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BuyNow {
+    id: usize,
+    buyer_fk: usize,
+    item_fk: usize,
+    quantity: usize,
+    date: u64,
+}
+
+// CREATE TABLE ids (
+//    id        INTEGER UNSIGNED NOT NULL UNIQUE,
+//    category  INTEGER UNSIGNED NOT NULL,
+//    region    INTEGER UNSIGNED NOT NULL,
+//    users     INTEGER UNSIGNED NOT NULL,
+//    item      INTEGER UNSIGNED NOT NULL,
+//    comment   INTEGER UNSIGNED NOT NULL,
+//    bid       INTEGER UNSIGNED NOT NULL,
+//    buyNow    INTEGER UNSIGNED NOT NULL,
+//    PRIMARY KEY(id)
+// );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RubisOp {
-    RegisterUser{id: UserId},
-    Bid{user: UserId, auction: AuctionId, val: Price},
-    CloseAuction{id: AuctionId},
-    // OpenAuction{},
-    // BuyNow{id: AuctionId},
+    GetStatus,
+    RegisterUser{},
+    OpenAuction{},
+    CloseAuction{},
+    Bid{},
+    BuyNow{},
+    // Comment{},
 }
 
 impl Operation for RubisOp {
     /// (Users, Auctions)
-    type State = (HashSet<UserId>, HashMap<AuctionId, (bool, Vec<(UserId, Price)>)>);
+    type State = DB;
     /// (ok?, winner)
-    type ReadVal = (bool, Option<UserId>);
+    type ReadVal = ();
 
     fn is_red(&self) -> bool {
         match *self {
@@ -172,4 +270,31 @@ impl Operation for RubisOp {
     fn gen_query(settings: &crate::api::http::BenchSettings) -> Self {
         todo!()
     }
+}
+
+
+enum State {
+    Home,
+    Register,
+    RegisterUser,
+    Browse,
+    Back,
+    EndSession,
+}
+
+fn state_transition(from: State, previous_states: &mut Vec<State>) -> (RubisOp, State) {
+    let random = thread_rng().gen_range(0..100);
+    let next: State;
+    match from {
+        State::Home => {
+            
+        },
+        State::Register => {
+
+        },
+    }
+
+
+    previous_states.push(from);
+    todo!()
 }
