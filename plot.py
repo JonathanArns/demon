@@ -3,6 +3,7 @@ import sys
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import scipy.stats as st
 
 
 PLOT_STYLES = {
@@ -33,6 +34,17 @@ LABELS = {
 }
 
 
+def p99(series):
+    return st.scoreatpercentile(series, 99.0)
+
+def calc_stats(series, confidence_level=0.95):
+    return {
+        "mean": st.tmean(series),
+        "mean_conf_int": st.bootstrap((series,), st.tmean, confidence_level=confidence_level, method="percentile").confidence_interval,
+        "p99": p99(series),
+        "p99_conf_int": st.bootstrap((series,), p99, confidence_level=confidence_level, method="percentile").confidence_interval,
+    }
+
 def plot_tpcc(df, dir_path):
     for cluster_size in df["cluster_size"].unique():
         cluster_df = df[df["cluster_size"] == cluster_size]
@@ -51,45 +63,53 @@ def plot_rubis(df, dir_path):
     df = df[df["datatype"] == "rubis"]
     if len(df) == 0:
         return
+
     for cluster_size in df["cluster_size"].unique():
         cluster_df = df[df["cluster_size"] == cluster_size]
         protocols = df["proto"].unique()
         operations = ["GetAuction", "GetItem", "OpenAuction", "CloseAuction", "Bid", "Sell", "BuyNow"] 
-        mean_latencies = {proto: [] for proto in protocols}
-        p99_latencies = {proto: [] for proto in protocols}
+        stats = {proto: [] for proto in protocols}
         for proto in protocols:
             proto_df = cluster_df[cluster_df["proto"] == proto]
-            idx = proto_df["total_throughput"].idxmax()
-            rows_with_max_throughput = proto_df.loc[idx]
             for operation in operations:
-                mean_latencies[proto].append(rows_with_max_throughput[f"{operation}_mean_latency"])
-                p99_latencies[proto].append(rows_with_max_throughput[f"{operation}_p99_latency"])
+                op_df = proto_df[proto_df["op"] == operation]
+                stats[proto].append(calc_stats(op_df["latency_micros"]))
 
-        plt.figure(figsize=(10, 6))  # Adjust size as needed
+        plt.figure(figsize=(6, 6))  # Adjust size as needed
         plt.suptitle(f"Rubis-like benchmark with {cluster_size} replicas")
         
         index = np.arange(len(operations))
         bar_width = 0.1
 
-        plt.subplot(2, 1, 1)
         i = 0
-        for proto, vals in mean_latencies.items():
-            plt.bar(index + 1.5*i*bar_width, vals, bar_width, label=proto)
+        for proto, stats in stats.items():
+            mean = [item["mean"] for item in stats]
+            mean_conf = [item["mean_conf_int"] for item in stats]
+            # p99 = [item["p99"] for item in stats]
+            plt.bar(
+                x=index + 1.5*i*bar_width,
+                height=[item["mean"] for item in stats],
+                yerr=([item["mean"] - item["mean_conf_int"].low for item in stats], [item["mean_conf_int"].high - item["mean"] for item in stats]),
+                width=bar_width,
+                label=proto,
+                capsize=1.0
+            )
             i += 1
         plt.xticks(index + 0.5 * 1.5 * bar_width * (len(protocols)-1), operations)
         plt.ylabel("mean latency (ms)")
         # plt.title(f"mean latency per operation")
         plt.legend()
+        plt.savefig(os.path.join(dir_path, f"rubis_bar_plot_{cluster_size}_nodes.png"), dpi=300)
 
-        plt.subplot(2, 1, 2)
-        i = 0
-        for operation, vals in p99_latencies.items():
-            plt.bar(index + 1.5*i*bar_width, vals, bar_width, label=operation)
-            i += 1
-        plt.xticks(index + 0.5 * 1.5 * bar_width * (len(protocols)-1), operations)
-        plt.ylabel("p99 latency (ms)")
-        # plt.title(f"tail latency per operation")
-        plt.legend()
+        # plt.subplot(2, 1, 2)
+        # i = 0
+        # for operation, vals in p99_latencies.items():
+        #     plt.bar(index + 1.5*i*bar_width, vals, bar_width, label=operation)
+        #     i += 1
+        # plt.xticks(index + 0.5 * 1.5 * bar_width * (len(protocols)-1), operations)
+        # plt.ylabel("p99 latency (ms)")
+        # # plt.title(f"tail latency per operation")
+        # plt.legend()
 
         plt.savefig(os.path.join(dir_path, f"rubis_bar_plot_{cluster_size}_nodes.png"), dpi=300)
     
@@ -179,9 +199,10 @@ if __name__ == "__main__":
     path = args[0]
     
     try:
-        df = pd.read_csv(os.path.join(path, "micro_bench.csv"))
-        plot_micro(df, path)
+        df = pd.read_csv(os.path.join(path, "micro.csv"))
         plot_rubis(df, path)
+        exit()
+        plot_micro(df, path)
     except Exception as e:
         print(f"err: {e}")
     try:

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, time::Duration};
+use std::time::Duration;
 
 use axum::{async_trait, extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -62,10 +62,10 @@ async fn latency_endpoint<O: Operation>(State((network, _query_sender)): State<(
     Ok(Json(latencies))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 struct Measurement {
-    latency: Duration,
-    operation: String,
+    latency_micros: usize,
+    op: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -78,23 +78,7 @@ pub struct BenchSettings {
     pub duration: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct BenchMetrics {
-    /// ops per second
-    pub throughput: f64,
-    /// in millis
-    pub mean_latency: f64,
-    pub p99_latency: f64,
-    pub p95_latency: f64,
-}
-
-#[derive(Clone, Debug, Serialize)]
-struct BenchOutput {
-    pub totals: BenchMetrics,
-    pub per_op: HashMap<String, BenchMetrics>,
-}
-
-async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<BenchOutput>, StatusCode> {
+async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<Vec<Measurement>>, StatusCode> {
     let (watch_sender, watcher) = watch::channel(false);
 
     // set up the clients
@@ -117,38 +101,7 @@ async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
         measurements.extend_from_slice(&data);
     }
 
-    let mut latencies = measurements.iter().map(|m| m.latency.as_micros() as f64 / 1000.0).collect::<Vec<_>>();
-    latencies.sort_by_key(|x| (x * 1000.0) as usize);
-
-    let metrics = BenchMetrics {
-        throughput: measurements.len() as f64 / settings.duration as f64,
-        mean_latency: latencies.iter().sum::<f64>() / latencies.len() as f64,
-        p99_latency: latencies[(latencies.len() as f64 * 0.99) as usize],
-        p95_latency: latencies[(latencies.len() as f64 * 0.95) as usize],
-    };
-    let mut output = BenchOutput {
-        totals: metrics,
-        per_op: HashMap::new(),
-    };
-    
-    // record metrics per operation
-    let mut operations = HashSet::new();
-    for op in measurements.iter().map(|m| m.operation.clone()) {
-        operations.insert(op);
-    }
-    for op in operations {
-        let mut latencies = measurements.iter().filter(|m| m.operation == op).map(|m| m.latency.as_micros() as f64 / 1000.0).collect::<Vec<_>>();
-        latencies.sort_by_key(|x| (x * 1000.0) as usize);
-        let metrics = BenchMetrics {
-            throughput: measurements.len() as f64 / settings.duration as f64,
-            mean_latency: latencies.iter().sum::<f64>() / latencies.len() as f64,
-            p99_latency: latencies[(latencies.len() as f64 * 0.99) as usize],
-            p95_latency: latencies[(latencies.len() as f64 * 0.95) as usize],
-        };
-        output.per_op.insert(op, metrics);
-    }
-
-    Ok(Json(output))
+    Ok(Json(measurements))
 }
 
 async fn run_client<O: Operation>(
@@ -175,7 +128,7 @@ async fn run_client<O: Operation>(
                     if let Some(val) = res.value {
                         O::update_query_state(&mut query_state, val);
                     }
-                    measurements.push(Measurement{latency: start_time.elapsed(), operation: op_name });
+                    measurements.push(Measurement{latency_micros: start_time.elapsed().as_micros() as usize, op: op_name });
                 }
             },
             // request timeout
