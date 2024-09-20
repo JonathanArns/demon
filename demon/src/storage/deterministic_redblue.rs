@@ -22,10 +22,11 @@ pub struct Storage<O: Operation> {
 
 impl<O: Operation> Storage<O> {
     pub fn new(nodes: Vec<NodeId>) -> Self {
+        let state = O::State::default();
         Self {
-            state: Default::default(),
+            state: Arc::new(RwLock::new(state.clone())),
+            red_shadow_state: Arc::new(RwLock::new(state)),
             state_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
-            red_shadow_state: Default::default(),
             red_shadow_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
             uncommitted_blue_ops: Default::default(),
         }
@@ -38,7 +39,7 @@ impl<O: Operation> Storage<O> {
 
     /// Generates the shadow op for `op` on the current state.
     pub async fn generate_blue_shadow(&self, op: O) -> Option<O> {
-        op.generate_shadow(&*self.state.read().await)
+        op.generate_shadow(&mut *self.state.write().await)
     }
 
     /// Executes a blue query.
@@ -95,7 +96,7 @@ impl<O: Operation> Storage<O> {
         // generate the shadow operation
         let mut output = None;
         if let Some(op) = t.op {
-            if let Some(shadow) = op.generate_shadow(&red_shadow_state) {
+            if let Some(shadow) = op.generate_shadow(&mut red_shadow_state) {
                 // apply the shadow operation
                 let _ = shadow.apply(&mut red_shadow_state);
                 output = shadow.apply(&mut state);

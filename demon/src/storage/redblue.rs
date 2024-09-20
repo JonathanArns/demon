@@ -60,7 +60,7 @@ impl<O: Operation> Storage<O> {
     /// Also returns the snapshot on which this shadow operation was generated.
     pub async fn generate_shadow(&self, op: O) -> Option<(O, Snapshot)> {
         let lock = self.current_snapshot.read().await;
-        let shadow = op.generate_shadow(&*self.state.read().await);
+        let shadow = op.generate_shadow(&mut *self.state.write().await);
         shadow.map(|x| (x, lock.clone()))
     }
 

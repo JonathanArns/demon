@@ -17,3 +17,5 @@ async-trait = "0.1"
 omnipaxos = { version = "0.2.2", features = ["serde"] }
 omnipaxos_storage = "0.2.2"
 indexmap = "2"
+cola = { git = "https://github.com/JonathanArns/cola", features = ["serde"] }
+ropey = { version = "1.6.1" }

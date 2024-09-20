@@ -979,7 +979,7 @@ impl Operation for TpccOp {
         }
     }
 
-    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
         match *self {
             Self::LoadTuples {..} => Some(self.clone()),
             Self::Delivery {..} => Some(self.clone()),

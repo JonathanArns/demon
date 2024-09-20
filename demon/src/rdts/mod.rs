@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -9,6 +9,7 @@ pub mod rubis_rdt;
 pub mod tpcc;
 pub mod non_negative_counter;
 pub mod or_set;
+pub mod co_editor;
 
 /// A generic operations first approach to defining replicated data types.
 pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned + 'static {
@@ -35,7 +36,9 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Indicates an ordering restriction in PoR.
     fn is_por_conflicting(&self, other: &Self) -> bool;
     /// Used to turn client operations into shadow operations.
-    fn generate_shadow(&self, state: &Self::State) -> Option<Self>;
+    /// Must not perform client-visible state mutations, but may perform "bookkeeping" for CRDT
+    /// correctness.
+    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self>;
     /// Used to generate benchmark workloads
     fn gen_query(settings: &BenchSettings, state: &mut Self::QueryState) -> Self;
     fn update_query_state(state: &mut Self::QueryState, val: Self::ReadVal) {}
@@ -44,6 +47,10 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Used to generate the periodic strong no-op executed by Demon.
     fn gen_periodic_strong_op() -> Option<Self> {
         None
+    }
+    /// The frequency of periodic strong ops in Demon.
+    fn periodic_strong_op_interval() -> Duration {
+        Duration::from_millis(20)
     }
     /// Can be used as an optimization to tell DeMon that an RDT does not
     /// observe any state for shadow op generation.

@@ -27,12 +27,13 @@ pub struct Storage<O: Operation> {
 
 impl<O: Operation> Storage<O> {
     pub fn new(nodes: Vec<NodeId>) -> Self {
+        let state = O::State::default();
         Self {
             uncommitted_weak_ops: Default::default(),
             latest_transaction_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
             latest_weak_snapshot: Arc::new(RwLock::new(Snapshot::new(&nodes))),
-            latest_transaction_snapshot_state: Default::default(),
-            latest_weak_snapshot_state: Default::default(),
+            latest_weak_snapshot_state: Arc::new(RwLock::new(state.clone())),
+            latest_transaction_snapshot_state: Arc::new(RwLock::new(state)),
         }
     }
 
@@ -130,6 +131,6 @@ impl<O: Operation> Storage<O> {
 
     /// Generates the shadow op for `op` on the current state.
     pub async fn generate_shadow(&self, op: O) -> Option<O> {
-        op.generate_shadow(&*self.latest_weak_snapshot_state.read().await)
+        op.generate_shadow(&mut *self.latest_weak_snapshot_state.write().await)
     }
 }

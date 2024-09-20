@@ -122,7 +122,7 @@ impl Operation for CounterOp {
     }
 
     /// All of the counter operations are their own shadow operations.
-    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
         Some(self.clone())
     }
 

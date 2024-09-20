@@ -16,7 +16,7 @@ mod protocols;
 use clap::Parser;
 
 use api::http::HttpApi;
-use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp, or_set::ORSetOp, rubis_rdt::RubisOp};
+use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp, or_set::ORSetOp, rubis_rdt::RubisOp, co_editor::EditorOp};
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 
@@ -150,7 +150,30 @@ async fn main() {
                 _ => panic!("unknown protocol {:?}", args.protocol.clone()),
             };
         },
-        _ => panic!("bad datatype argument, options are: counter, non-neg-counter, tpcc, rubis")
+        "co-editor" => {
+            match &args.protocol[..] {
+                "demon" => {
+                    protocols::demon::DeMon::<EditorOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                "strict" => {
+                    protocols::strict::Strict::<EditorOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                "causal" => {
+                    protocols::causal::Causal::<EditorOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                "redblue" => {
+                    protocols::deterministic_redblue::DeterministicRedBlue::<EditorOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                "gemini" => {
+                    protocols::gemini::Gemini::<EditorOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                "unistore" => {
+                    protocols::unistore::Unistore::<EditorOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
+                },
+                _ => panic!("unknown protocol {:?}", args.protocol.clone()),
+            };
+        },
+        _ => panic!("bad datatype argument, options are: counter, non-neg-counter, tpcc, rubis, co-editor")
     }
 
     println!("Started server version {}.", VERSION);

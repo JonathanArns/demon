@@ -156,7 +156,7 @@ impl<O: Operation> DeMon<O> {
         tokio::spawn(async move {
             loop {
                 // generate no-op strong operations periodically
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                tokio::time::sleep(O::periodic_strong_op_interval()).await;
                 let id = demon.generate_transaction_id().await;
                 let snapshot = demon.choose_transaction_snapshot().await;
                 let transaction = Transaction { id, snapshot, op: O::gen_periodic_strong_op() };
