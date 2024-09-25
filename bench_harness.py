@@ -57,7 +57,7 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             repr = json.dumps(bench_config, sort_keys=True)
             if repr in bench_state["finished_benches"]:
                 continue
-            output = run_bench(bench_config, nodes, silent, always_load)
+            output, logs = run_bench(bench_config, nodes, silent, always_load)
             bench_state["finished_benches"].append(repr)
             if output is not None:
                 if "tpcc" == bench_config["type"]:
@@ -69,7 +69,12 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
                         df.to_csv(path, index=False)
                     else:
                         df.to_csv(path, mode="a", index=False, header=False)
-                    bench_state["micro_rows_written"] += len(df)
+                    df = pd.DataFrame(logs)
+                    path = os.path.join(output_dir, "logs.csv")
+                    if not os.path.isfile(path):
+                        df.to_csv(path, index=False)
+                    else:
+                        df.to_csv(path, mode="a", index=False, header=False)
             if write_output:
                 with open(os.path.join(output_dir, "bench_state.json"), "w") as file:
                     json.dump(bench_state, file)
@@ -158,6 +163,19 @@ def run_micro(args):
     except Exception:
         return None
 
+def get_logs(args):
+    """
+    This is a helper function to get the instrumentation data.
+    """
+    try:
+        logs = requests.get(f"http://{args[1]}/instrumentation", timeout=args[3]).json()
+        return {
+            "logs": logs,
+            "node_id": args[0],
+        }
+    except Exception:
+        return None
+
 def run_tpcc(args):
     """
     This is a helper function to run the tpcc bench with multiprocessing.
@@ -188,11 +206,13 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                 args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"], 2 * bench_config["settings"]["duration"]) for id in bench_config["cluster_config"]["node_ids"]]
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_micro, args)
+                    logs = pool.map(get_logs, args)
                 if None in results:
                     raise Exception("micro results missing from at least one process")
 
                 # record benchmark measurements
                 output = []
+                logs_output = []
                 for exp in results:
                     for value in exp["measurements"]:
                         data = {}
@@ -209,7 +229,24 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                         data["num_clients"] = bench_config["settings"]["num_clients"]
                         data["key_range"] = bench_config["settings"]["key_range"]
                         output.append(data)
-                return output
+                for exp in logs:
+                    for value in exp["logs"]:
+                        data = {}
+                        data["unix_micros"] = value["unix_micros"]
+                        data["kind"] = value["kind"]
+                        data["meta"] = value["meta"]
+                        data["node"] = exp["node_id"]
+                        data["datatype"] = bench_config["cluster_config"]["datatype"]
+                        data["proto"] = bench_config["cluster_config"]["proto"]
+                        data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
+                        data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
+                        data["read_ratio"] = bench_config["settings"]["read_ratio"]
+                        data["read_ratio"] = bench_config["settings"]["read_ratio"]
+                        data["duration"] = bench_config["settings"]["duration"]
+                        data["num_clients"] = bench_config["settings"]["num_clients"]
+                        data["key_range"] = bench_config["settings"]["key_range"]
+                        logs_output.append(data)
+                return output, logs_output
 
             elif "tpcc" == bench_config["type"]:
                 settings = bench_config["settings"]
@@ -283,7 +320,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                     except Exception as e:
                         raise Exception(f"couldn't load TPCC results with exception {e}\nSTDOUT:\n{result['std_out']}\nSTDERR:\n{result['std_err']}")
                 data["total_mean_latency"] /= len(results)
-                return data
+                return data, []
 
             else:
                 print("Bad benchmark type. choose one of: micro, tpcc")

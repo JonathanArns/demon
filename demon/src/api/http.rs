@@ -6,7 +6,7 @@ use tokio::{select, sync::{mpsc, oneshot, watch}, time::Instant};
 
 use crate::{network::{Network, NodeId}, protocols::Message, rdts::Operation, storage::QueryResult};
 
-use super::API;
+use super::{instrumentation::{read_instrumentation_events, TimedInstrumentationEvent}, API};
 
 pub struct HttpApi {}
 
@@ -26,6 +26,7 @@ impl<O: Operation> API<O> for HttpApi {
                 .route("/query", post(query_endpoint))
                 .route("/bench", post(bench_endpoint))
                 .route("/measure_rtt_latency", get(latency_endpoint))
+                .route("/instrumentation", get(instrumentation_endpoint))
                 .with_state((network, query_sender));
             let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
             axum::serve(listener, app).await.unwrap()
@@ -60,6 +61,11 @@ async fn query_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
 async fn latency_endpoint<O: Operation>(State((network, _query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>) -> Result<Json<Vec<(NodeId, Option<String>, Duration)>>, StatusCode> {
     let latencies = network.measure_round_trips().await;
     Ok(Json(latencies))
+}
+
+async fn instrumentation_endpoint() -> Result<Json<Vec<TimedInstrumentationEvent>>, StatusCode> {
+    let data = read_instrumentation_events().await;
+    Ok(Json(data))
 }
 
 #[derive(Clone, Debug, Serialize)]

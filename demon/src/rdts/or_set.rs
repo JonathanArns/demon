@@ -117,10 +117,6 @@ impl Operation for ORSetOp {
         }
     }
 
-    fn uses_state_for_shadow_generation() -> bool {
-        false
-    }
-
     fn gen_periodic_strong_op() -> Option<Self> {
         Some(Self::Compact)
     }

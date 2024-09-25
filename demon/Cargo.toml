@@ -19,3 +19,8 @@ omnipaxos_storage = "0.2.2"
 indexmap = "2"
 cola = { git = "https://github.com/JonathanArns/cola", features = ["serde"] }
 ropey = { version = "1.6.1" }
+lazy_static = "1.5"
+
+[features]
+default = ["instrument"]
+instrument = []

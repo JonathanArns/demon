@@ -1,7 +1,7 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{deterministic_redblue::Storage, QueryResult, Transaction}, causal_replication::{Snapshot, TaggedEntry, CausalReplicationEvent, CausalReplication}};
+use crate::{api::{instrumentation::{log_instrumentation, InstrumentationEvent}, API}, causal_replication::{CausalReplication, CausalReplicationEvent, Snapshot, TaggedEntry}, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{deterministic_redblue::Storage, QueryResult, Transaction}};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}, time::Instant};
+use tokio::{net::ToSocketAddrs, select, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use super::{TransactionId, Component, Message};
@@ -12,6 +12,7 @@ struct TaggedBlueOp<O> {
     op: O,
     /// the amount of decided red transactions that we need to wait for before executing this blue op
     transaction_count: usize,
+    id: TransactionId,
 }
 
 pub struct DeterministicRedBlue<O: Operation> {
@@ -105,11 +106,18 @@ impl<O: Operation> DeterministicRedBlue<O> {
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
+                let name = query.name();
                 if query.is_red() {
                     // red operation
                     let protocol = proto.clone();
                     tokio::spawn(async move {
                         let id = protocol.generate_transaction_id().await;
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("initiated"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
                         let snapshot = protocol.snapshot_barrier().await;
                         let transaction = Transaction { id, snapshot, op: Some(query) };
                         protocol.waiting_transactions.lock().await.insert(id, result_sender);
@@ -119,12 +127,26 @@ impl<O: Operation> DeterministicRedBlue<O> {
                     // blue operation
                     if query.is_writing() {
                         if let Some(shadow) = proto.storage.generate_blue_shadow(query.clone()).await {
+                            let id = proto.generate_transaction_id().await;
+                            #[cfg(feature = "instrument")]
+                            log_instrumentation(InstrumentationEvent{
+                                kind: String::from("initiated"),
+                                val: None,
+                                meta: Some(id.to_string() + " " + &name),
+                            });
                             let tagged_op = TaggedBlueOp {
                                 op: shadow,
                                 transaction_count: *proto.decided_transaction_count.read().await,
+                                id,
                             };
                             let op = proto.causal_replication.replicate(tagged_op).await;
                             let result = proto.storage.exec_blue_shadow(op.value.op, op.causality, op.from).await;
+                            #[cfg(feature = "instrument")]
+                            log_instrumentation(InstrumentationEvent{
+                                kind: String::from("visible"),
+                                val: None,
+                                meta: Some(id.to_string() + " " + &name),
+                            });
                             let _ = result_sender.send(result);
                         } else {
                             let _ = result_sender.send(QueryResult { value: None });
@@ -148,7 +170,15 @@ impl<O: Operation> DeterministicRedBlue<O> {
                         proto.inc_transaction_count(decided_entries.len()).await;
                         for transaction in decided_entries {
                             let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);
-                            let response = proto.storage.exec_red(transaction).await;
+                            let response = proto.storage.exec_red(transaction.clone()).await;
+                            #[cfg(feature = "instrument")]
+                            if let Some(op) = transaction.op {
+                                log_instrumentation(InstrumentationEvent{
+                                    kind: String::from("visible"),
+                                    val: None,
+                                    meta: Some(transaction.id.to_string() + " " + &op.name()),
+                                });
+                            }
                             if let Some(sender) = result_sender {
                                 // this node has a client waiting for this response
                                 let _ = sender.send(response);
@@ -173,7 +203,13 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                     let op = &waiting_blue_ops[i];
                                     if transaction_count >= op.value.transaction_count {
                                         let op = waiting_blue_ops.remove(i);
-                                        proto.storage.exec_blue_shadow(op.value.op, op.causality, op.from).await;
+                                        proto.storage.exec_blue_shadow(op.value.op.clone(), op.causality, op.from).await;
+                                        #[cfg(feature = "instrument")]
+                                        log_instrumentation(InstrumentationEvent{
+                                            kind: String::from("visible"),
+                                            val: None,
+                                            meta: Some(op.value.id.to_string() + " " + &op.value.op.name()),
+                                        });
                                     } else {
                                         i += 1;
                                     }
@@ -182,7 +218,13 @@ impl<O: Operation> DeterministicRedBlue<O> {
                                 if new_op.value.transaction_count > transaction_count {
                                     waiting_blue_ops.push(new_op);
                                 } else {
-                                    proto.storage.exec_blue_shadow(new_op.value.op, new_op.causality, new_op.from).await;
+                                    proto.storage.exec_blue_shadow(new_op.value.op.clone(), new_op.causality, new_op.from).await;
+                                    #[cfg(feature = "instrument")]
+                                    log_instrumentation(InstrumentationEvent{
+                                        kind: String::from("visible"),
+                                        val: None,
+                                        meta: Some(new_op.value.id.to_string() + " " + &new_op.value.op.name()),
+                                    });
                                 }
                             },
                             CausalReplicationEvent::QuorumReplicated(snapshot) => {
@@ -198,7 +240,13 @@ impl<O: Operation> DeterministicRedBlue<O> {
                             let op = &waiting_blue_ops[i];
                             if transaction_count >= op.value.transaction_count {
                                 let op = waiting_blue_ops.remove(i);
-                                proto.storage.exec_blue_shadow(op.value.op, op.causality, op.from).await;
+                                proto.storage.exec_blue_shadow(op.value.op.clone(), op.causality, op.from).await;
+                                #[cfg(feature = "instrument")]
+                                log_instrumentation(InstrumentationEvent{
+                                    kind: String::from("visible"),
+                                    val: None,
+                                    meta: Some(op.value.id.to_string() + " " + &op.value.op.name()),
+                                });
                             } else {
                                 i += 1;
                             }

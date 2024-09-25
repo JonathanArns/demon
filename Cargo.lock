@@ -384,6 +384,7 @@ dependencies = [
  "cola",
  "futures",
  "indexmap",
+ "lazy_static",
  "omnipaxos",
  "omnipaxos_storage",
  "rand",

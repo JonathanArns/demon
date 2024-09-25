@@ -1,6 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use crate::{network::NodeId, causal_replication::{TaggedEntry, Snapshot}};
+use crate::{api::instrumentation::{log_instrumentation, InstrumentationEvent}, causal_replication::{Snapshot, TaggedEntry}, network::NodeId, protocols::TransactionId};
 use super::{QueryResult, Transaction};
 use crate::rdts::Operation;
 
@@ -13,7 +13,7 @@ use crate::rdts::Operation;
 #[derive(Debug)]
 pub struct Storage<O: Operation> {
     /// Weak operations that are not part of a transaction snapshot yet.
-    uncommitted_weak_ops: Arc<RwLock<Vec<TaggedEntry<O>>>>,
+    uncommitted_weak_ops: Arc<RwLock<Vec<TaggedEntry<(TransactionId, O)>>>>,
     /// The snapshot that the latest transaction was executed on.
     /// weak_logs may be truncated up to this snapshot, because we will never
     /// need to re-execute anything before this snapshot.
@@ -40,8 +40,8 @@ impl<O: Operation> Storage<O> {
     /// Executes a weak query.
     ///
     /// To be called for all weak queries that are delivered by weak replication.
-    pub async fn exec_remote_weak_query(&self, op: TaggedEntry<O>) {
-        op.value.apply(&mut *self.latest_weak_snapshot_state.write().await);
+    pub async fn exec_remote_weak_query(&self, op: TaggedEntry<(TransactionId, O)>) {
+        op.value.1.apply(&mut *self.latest_weak_snapshot_state.write().await);
         self.latest_weak_snapshot.write().await.increment(op.from, 1);
         self.uncommitted_weak_ops.write().await.push(op);
     }
@@ -49,7 +49,7 @@ impl<O: Operation> Storage<O> {
     /// Executes a weak query from the client.
     /// 
     /// Returns possible read value.
-    pub async fn exec_weak_query(&self, op: O, from: NodeId) -> QueryResult<O> {
+    pub async fn exec_weak_query(&self, id: TransactionId, op: O, from: NodeId) -> QueryResult<O> {
         let mut state_latch = self.latest_weak_snapshot_state.write().await;
 
         // now we execute the actual query and store the write ops
@@ -58,7 +58,7 @@ impl<O: Operation> Storage<O> {
             let mut snapshot = self.latest_weak_snapshot.write().await;
             let mut log_latch = self.uncommitted_weak_ops.write().await;
             let tagged_op = TaggedEntry {
-                value: op,
+                value: (id, op),
                 from,
                 causality: snapshot.clone(),
             };
@@ -94,7 +94,7 @@ impl<O: Operation> Storage<O> {
             while i < uncommitted_ops.len() {
                 let op = &uncommitted_ops[i];
                 if op.causality.included_in(&strong_snapshot) {
-                    op.value.apply(&mut strong_state);
+                    op.value.1.apply(&mut strong_state);
                     uncommitted_ops.remove(i);
                 } else {
                     i += 1;
@@ -102,9 +102,15 @@ impl<O: Operation> Storage<O> {
             }
         }
 
-
         // execute the transaction
         let output = if let Some(op) = t.op {
+            #[cfg(feature = "instrument")]
+            log_instrumentation(InstrumentationEvent{
+                kind: String::from("num_unstable_ops"),
+                val: Some(uncommitted_ops.len() as u64),
+                meta: None,
+            });
+
             let output = op.apply(&mut strong_state);
 
             let weak_is_ahead = weak_snapshot.greater(&strong_snapshot);
@@ -112,8 +118,8 @@ impl<O: Operation> Storage<O> {
                 // update weak snapshot state
                 op.rollback_conflicting_state(&strong_state, &mut weak_state);
                 for weak in uncommitted_ops.iter() {
-                    if op.is_conflicting(&weak.value) {
-                        weak.value.apply(&mut weak_state);
+                    if op.is_conflicting(&weak.value.1) {
+                        weak.value.1.apply(&mut weak_state);
                     }
                 }
             } else {

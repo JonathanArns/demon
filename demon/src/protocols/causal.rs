@@ -1,15 +1,16 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}, causal_replication::{CausalReplicationEvent, CausalReplication}};
+use crate::{api::{instrumentation::{log_instrumentation, InstrumentationEvent}, API}, causal_replication::{CausalReplication, CausalReplicationEvent}, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::mpsc::Receiver};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, Mutex}};
 use std::sync::Arc;
 
-use super::{Component, Message};
+use super::{Component, Message, TransactionId};
 
 /// A basic implementation of causal order RDTs
 pub struct Causal<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
-    causal_replication: CausalReplication<O>,
+    causal_replication: CausalReplication<(TransactionId, O)>,
+    next_transaction_id: Arc<Mutex<TransactionId>>,
 }
 
 // TODO: this single message loop could become a point of contention...
@@ -34,10 +35,12 @@ impl<O: Operation> Causal<O> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
         let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
+        let id = network.my_id().await;
         let proto = Arc::new(Self {
             network: network.clone(),
             storage,
             causal_replication,
+            next_transaction_id: Arc::new(Mutex::new(TransactionId(id, 0))),
         });
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
@@ -47,11 +50,19 @@ impl<O: Operation> Causal<O> {
         proto
     }
 
+    /// Generates a new globally unique transaction Id.
+    async fn generate_transaction_id(&self) -> TransactionId {
+        let mut latch = self.next_transaction_id.lock().await;
+        let id = *latch;
+        latch.1 += 1;
+        id
+    }
+
     /// Process events from the components.
     /// Spawns an individual task for each event stream.
     async fn event_loop(
         self: Arc<Self>,
-        mut causal_replication_events: Receiver<CausalReplicationEvent<O>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<(TransactionId, O)>>,
         api: Box<dyn API<O>>,
     ) {
         let mut api_events = api.start(self.network.clone()).await;
@@ -60,10 +71,17 @@ impl<O: Operation> Causal<O> {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_writing() {
+                    let id = proto.generate_transaction_id().await;
+                    #[cfg(feature = "instrument")]
+                    log_instrumentation(InstrumentationEvent{
+                        kind: String::from("initiated"),
+                        val: None,
+                        meta: Some(id.to_string() + " " + &query.name()),
+                    });
                     if let Some(shadow) = proto.storage.generate_shadow(query).await {
                         let result = proto.storage.exec(shadow.clone()).await;
                         let _ = result_sender.send(result);
-                        proto.causal_replication.replicate(shadow).await;
+                        proto.causal_replication.replicate((id, shadow)).await;
                     } else {
                         let _ = result_sender.send(QueryResult { value: None });
                     }
@@ -79,7 +97,15 @@ impl<O: Operation> Causal<O> {
                 let e = causal_replication_events.recv().await.unwrap();
                 match e {
                     CausalReplicationEvent::Deliver(op) => {
-                        proto.storage.exec(op.value).await;
+                        let name = op.value.1.name();
+                        let id = op.value.0;
+                        proto.storage.exec(op.value.1).await;
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("visible"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
                     },
                     CausalReplicationEvent::QuorumReplicated(_snapshot) => (),
                 }

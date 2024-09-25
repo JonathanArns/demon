@@ -1,7 +1,7 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{demon::Storage, QueryResult, Transaction}, causal_replication::{Snapshot, CausalReplicationEvent, CausalReplication}};
+use crate::{api::{instrumentation::{log_instrumentation, InstrumentationEvent}, API}, causal_replication::{CausalReplication, CausalReplicationEvent, Snapshot}, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{demon::Storage, QueryResult, Transaction}};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex, RwLock}};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use super::{TransactionId, Component, Message};
 
@@ -13,17 +13,13 @@ pub struct DeMon<O: Operation> {
     network: Network<Message>,
     storage: Storage<O>,
     sequencer: Sequencer<Transaction<O>>,
-    causal_replication: CausalReplication<O>,
-    /// TODO: I think the fields don't need to be arcs themselves, demon is always in an arc itself
+    causal_replication: CausalReplication<(TransactionId, O)>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
     next_transaction_snapshot: Arc<RwLock<Snapshot>>,
     /// Strong client requests wait here for transaction completion.
     waiting_transactions: Arc<Mutex<HashMap<TransactionId, oneshot::Sender<QueryResult<O>>>>>,
 }
 
-// TODO: this single message loop could become a point of contention...
-// maybe instead send the messages to the components via channels?
-// or just spawn a task for ones that block the loop...
 #[async_trait]
 impl<O: Operation> MsgHandler<Message> for DeMon<O> {
     async fn handle_msg(&self, from: NodeId, msg: Message) {
@@ -84,7 +80,7 @@ impl<O: Operation> DeMon<O> {
     async fn event_loop(
         self: Arc<Self>,
         mut sequencer_events: Receiver<SequencerEvent<Transaction<O>>>,
-        mut causal_replication_events: Receiver<CausalReplicationEvent<O>>,
+        mut causal_replication_events: Receiver<CausalReplicationEvent<(TransactionId, O)>>,
         api: Box<dyn API<O>>,
     ) {
         let my_id = self.network.my_id().await;
@@ -98,6 +94,12 @@ impl<O: Operation> DeMon<O> {
                     let protocol = demon.clone();
                     tokio::task::spawn(async move {
                         let id = protocol.generate_transaction_id().await;
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("initiated"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &query.name()),
+                        });
                         let snapshot = protocol.choose_transaction_snapshot().await;
                         let transaction = Transaction { id, snapshot, op: Some(query) };
                         protocol.waiting_transactions.lock().await.insert(id, result_sender);
@@ -106,15 +108,32 @@ impl<O: Operation> DeMon<O> {
                 } else {
                     // weak operation
                     if query.is_writing() {
+                        let name = query.name();
                         if let Some(shadow) = demon.storage.generate_shadow(query).await {
-                            let result = demon.storage.exec_weak_query(shadow.clone(), my_id).await;
+                            let id = demon.generate_transaction_id().await;
+                            #[cfg(feature = "instrument")]
+                            log_instrumentation(InstrumentationEvent{
+                                kind: String::from("initiated"),
+                                val: None,
+                                meta: Some(id.to_string() + " " + &name),
+                            });
+
+                            let result = demon.storage.exec_weak_query(id, shadow.clone(), my_id).await;
                             let _ = result_sender.send(result);
-                            demon.causal_replication.replicate(shadow).await;
+                            demon.causal_replication.replicate((id, shadow)).await;
+
+                            #[cfg(feature = "instrument")]
+                            log_instrumentation(InstrumentationEvent{
+                                kind: String::from("visible"),
+                                val: None,
+                                meta: Some(id.to_string() + " " + &name),
+                            });
+
                         } else {
                             let _ = result_sender.send(QueryResult { value: None });
                         }
                     } else {
-                        let result = demon.storage.exec_weak_query(query, my_id).await;
+                        let result = demon.storage.exec_weak_query(TransactionId::zero(), query, my_id).await;
                         let _ = result_sender.send(result);
                     }
                 }
@@ -128,7 +147,18 @@ impl<O: Operation> DeMon<O> {
                     SequencerEvent::Decided(decided_entries) => {
                         for transaction in decided_entries {
                             let result_sender = demon.waiting_transactions.lock().await.remove(&transaction.id);
-                            let response = demon.storage.exec_transaction(transaction).await;
+                            let id = transaction.id;
+                            let response = demon.storage.exec_transaction(transaction.clone()).await;
+
+                            #[cfg(feature = "instrument")]
+                            if let Some(op) = transaction.op {
+                                log_instrumentation(InstrumentationEvent{
+                                    kind: String::from("visible"),
+                                    val: None,
+                                    meta: Some(id.to_string() + " " + &op.name()),
+                                });
+                            }
+
                             if let Some(sender) = result_sender {
                                 // this node has a client waiting for this response
                                 let _ = sender.send(response);
@@ -143,8 +173,17 @@ impl<O: Operation> DeMon<O> {
             loop {
                 let e = causal_replication_events.recv().await.unwrap();
                 match e {
-                    CausalReplicationEvent::Deliver(op) => {
-                        demon.storage.exec_remote_weak_query(op).await;
+                    CausalReplicationEvent::Deliver(entry) => {
+                        let id = entry.value.0;
+                        let name = entry.value.1.name();
+                        demon.storage.exec_remote_weak_query(entry).await;
+
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("visible"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
                     },
                     CausalReplicationEvent::QuorumReplicated(snapshot) => {
                         demon.next_transaction_snapshot.write().await.merge_inplace(&snapshot);

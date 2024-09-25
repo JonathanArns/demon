@@ -1,4 +1,4 @@
-use crate::{api::API, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, QueryResult, Transaction}, causal_replication::Snapshot};
+use crate::{api::{instrumentation::{log_instrumentation, InstrumentationEvent}, API}, causal_replication::Snapshot, network::{MsgHandler, Network, NodeId}, rdts::Operation, sequencer::{Sequencer, SequencerEvent}, storage::{basic::Storage, QueryResult, Transaction}};
 use async_trait::async_trait;
 use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, oneshot, Mutex}};
 use std::{collections::HashMap, sync::Arc};
@@ -75,6 +75,12 @@ impl<O: Operation> Strict<O> {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_writing() {
                     let id = proto.generate_transaction_id().await;
+                    #[cfg(feature = "instrument")]
+                    log_instrumentation(InstrumentationEvent{
+                        kind: String::from("initiated"),
+                        val: None,
+                        meta: Some(id.to_string() + " " + &query.name()),
+                    });
                     let snapshot = Snapshot::new(&[]); // dummy snapshot, because we don't need it
                     let transaction = Transaction { id, snapshot, op: Some(query) };
                     proto.waiting_transactions.lock().await.insert(id, result_sender);
@@ -94,7 +100,14 @@ impl<O: Operation> Strict<O> {
                         for transaction in decided_entries {
                             if let Some(op) = transaction.op {
                                 let result_sender = proto.waiting_transactions.lock().await.remove(&transaction.id);
+                                let name = op.name();
                                 let response = proto.storage.exec(op).await;
+                                #[cfg(feature = "instrument")]
+                                log_instrumentation(InstrumentationEvent{
+                                    kind: String::from("visible"),
+                                    val: None,
+                                    meta: Some(transaction.id.to_string() + " " + &name),
+                                });
                                 if let Some(sender) = result_sender {
                                     // this node has a client waiting for this response
                                     let _ = sender.send(response);
