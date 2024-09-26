@@ -122,7 +122,7 @@ async fn run_client<O: Operation>(
     watcher.mark_unchanged();
     let mut query_state = O::QueryState::default();
     loop {
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         let query = O::gen_query(&settings, &mut query_state);
         let op_name = query.name();
         let start_time = Instant::now();
