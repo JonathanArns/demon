@@ -70,13 +70,14 @@ impl<O: Operation> Causal<O> {
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
+                let name = query.name();
                 if query.is_writing() {
                     let id = proto.generate_transaction_id().await;
                     #[cfg(feature = "instrument")]
                     log_instrumentation(InstrumentationEvent{
                         kind: String::from("initiated"),
                         val: None,
-                        meta: Some(id.to_string() + " " + &query.name()),
+                        meta: Some(id.to_string() + " " + &name),
                     });
                     if let Some(shadow) = proto.storage.generate_shadow(query).await {
                         let result = proto.storage.exec(shadow.clone()).await;
@@ -85,6 +86,12 @@ impl<O: Operation> Causal<O> {
                     } else {
                         let _ = result_sender.send(QueryResult { value: None });
                     }
+                    #[cfg(feature = "instrument")]
+                    log_instrumentation(InstrumentationEvent{
+                        kind: String::from("visible"),
+                        val: None,
+                        meta: Some(id.to_string() + " " + &name),
+                    });
                 } else {
                     let result = proto.storage.exec(query).await;
                     let _ = result_sender.send(result);
