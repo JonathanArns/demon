@@ -18,6 +18,9 @@ def run_bench_loop(path):
         print(f"ran {counter} times")
         counter += 1
 
+def bench_config_to_filename(config):
+    return f"{config['cluster_config']['datatype']}_{config['cluster_config']['proto']}_{len(config['cluster_config']['node_ids'])}nodes_{config['settings']['duration']}s_{config['settings']['num_clients']}clients_{config['settings']['strong_ratio']}strong_{config['settings']['key_range']}keys.csv"
+
 def run_benches_from_file(path, write_output=True, output_dir="./test_data/", silent=False, latencies=True, forget_protos=[], always_load=False):
     """
     Reads a json file that specifies the cluster and benchmark configurations.
@@ -37,8 +40,6 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             bench_state = json.load(file)
     except Exception:
         bench_state = {
-            "micro_rows_written": 0,
-            "tpcc_results": [],
             "finished_benches": [],
             "rtt_latencies": measure_rtt_latency(nodes) if latencies else None,
         }
@@ -47,50 +48,25 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
     if len(forget_protos) > 0:
         if not silent:
             print(f"forgetting state and results for protocols {forget_protos}")
-        # bench_state["micro_rows_written"] = 
-        bench_state["tpcc_results"] = [item for item in bench_state["tpcc_results"] if not item["proto"] in forget_protos]
-        bench_state["finished_benches"] = [item for item in bench_state["finished_benches"] if not json.loads(item)["cluster_config"]["proto"] in forget_protos]
+        bench_state["finished_benches"] = [item for item in bench_state["finished_benches"] if not item.split("_")[1] in forget_protos]
 
     # enumerate exeperiments and execute them
     for conf in data["multi_bench_configs"]:
         for bench_config in expand_multi_bench_config(conf):
-            repr = json.dumps(bench_config, sort_keys=True)
-            if repr in bench_state["finished_benches"]:
+            filename = bench_config_to_filename(bench_config)
+            filepath = os.path.join(output_dir, filename)
+            if filename in bench_state["finished_benches"]:
                 continue
-            output, logs = run_bench(bench_config, nodes, silent, always_load)
-            bench_state["finished_benches"].append(repr)
-            if output is not None:
-                if "tpcc" == bench_config["type"]:
-                    bench_state["tpcc_results"].append(output)
-                elif "micro" == bench_config["type"]:
-                    df = pd.DataFrame(output)
-                    path = os.path.join(output_dir, "micro.csv")
-                    if not os.path.isfile(path):
-                        df.to_csv(path, index=False)
-                    else:
-                        df.to_csv(path, mode="a", index=False, header=False)
-                    df = pd.DataFrame(logs)
-                    path = os.path.join(output_dir, "logs.csv")
-                    if not os.path.isfile(path):
-                        df.to_csv(path, index=False)
-                    else:
-                        df.to_csv(path, mode="a", index=False, header=False)
+            run_bench(bench_config, nodes, silent, always_load, write_output, filepath)
+            bench_state["finished_benches"].append(filename)
             if write_output:
                 with open(os.path.join(output_dir, "bench_state.json"), "w") as file:
-                    json.dump(bench_state, file)
-    
-    # write final results as csv files
-    tpcc_df = pd.DataFrame(bench_state["tpcc_results"])
-    if write_output:
-        if len(bench_state["tpcc_results"]) > 0:
-            tpcc_df.to_csv(os.path.join(output_dir, "tpcc.csv"), index=False)
-        with open(os.path.join(output_dir, "rtt_latencies.json"), "w") as f:
-            json.dump(bench_state["rtt_latencies"], f, indent=4)
-    elif not silent:
-        if len(tpcc_df.columns) > 0:
-            print(tpcc_df[["proto", "total_throughput", "total_mean_latency", "total_count"]])
-        print(f"wrote {bench_state['micro_rows_written']} measurements for micro benchmarks")
+                    json.dump(bench_state, file, indent=4)
 
+    if current_cluster_config:
+        stop_servers(current_cluster_config, nodes)
+    print("done")
+    
 def expand_multi_bench_config(multi_config):
     """
     Generates individual benchmark configurations from the more compact json file format.
@@ -189,7 +165,7 @@ def run_tpcc(args):
         return None
 
 previous_tpcc_settings = None
-def run_bench(bench_config, nodes, silent=False, always_load=False):
+def run_bench(bench_config, nodes, silent=False, always_load=False, write_output=True, file_path=""):
     """
     Runs a benchmark according to the specified config.
 
@@ -211,24 +187,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                     raise Exception("micro results missing from at least one process")
 
                 # record benchmark measurements
-                output = []
                 logs_output = []
-                for exp in results:
-                    for value in exp["measurements"]:
-                        data = {}
-                        data["latency_micros"] = value["latency_micros"]
-                        data["op"] = value["op"]
-                        data["node"] = exp["node_id"]
-                        data["datatype"] = bench_config["cluster_config"]["datatype"]
-                        data["proto"] = bench_config["cluster_config"]["proto"]
-                        data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
-                        data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
-                        data["read_ratio"] = bench_config["settings"]["read_ratio"]
-                        data["read_ratio"] = bench_config["settings"]["read_ratio"]
-                        data["duration"] = bench_config["settings"]["duration"]
-                        data["num_clients"] = bench_config["settings"]["num_clients"]
-                        data["key_range"] = bench_config["settings"]["key_range"]
-                        output.append(data)
                 for exp in logs:
                     for value in exp["logs"]:
                         data = {}
@@ -241,12 +200,14 @@ def run_bench(bench_config, nodes, silent=False, always_load=False):
                         data["cluster_size"] = len(bench_config["cluster_config"]["node_ids"])
                         data["strong_ratio"] = bench_config["settings"]["strong_ratio"]
                         data["read_ratio"] = bench_config["settings"]["read_ratio"]
-                        data["read_ratio"] = bench_config["settings"]["read_ratio"]
                         data["duration"] = bench_config["settings"]["duration"]
                         data["num_clients"] = bench_config["settings"]["num_clients"]
                         data["key_range"] = bench_config["settings"]["key_range"]
                         logs_output.append(data)
-                return output, logs_output
+                if write_output:
+                    df = pd.DataFrame(logs_output)
+                    df.to_csv(file_path, index=False)
+                return
 
             elif "tpcc" == bench_config["type"]:
                 settings = bench_config["settings"]
@@ -371,7 +332,7 @@ def stop_servers(cluster_config, nodes):
             except:
                 attempts += 1
                 time.sleep(attempts)
-        assert attempts < 5, "could not stop node"
+        assert attempts < 5, f"could not stop node {node_id}"
 
 def start_servers(cluster_config, nodes):
     """
