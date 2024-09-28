@@ -68,12 +68,6 @@ async fn instrumentation_endpoint() -> Result<Json<Vec<TimedInstrumentationEvent
     Ok(Json(data))
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct Measurement {
-    latency_micros: usize,
-    op: String,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 pub struct BenchSettings {
     pub read_ratio: f64,
@@ -84,11 +78,10 @@ pub struct BenchSettings {
     pub duration: u64,
 }
 
-async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<Json<Vec<Measurement>>, StatusCode> {
+async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Network<Message>, mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>)>, Json(settings): Json<BenchSettings>) -> Result<String, StatusCode> {
     let (watch_sender, watcher) = watch::channel(false);
 
     // set up the clients
-    let mut measurements = vec![];
     let mut futures = vec![];
     for _ in 0..settings.num_clients {
         futures.push(tokio::spawn(run_client(watcher.clone(), query_sender.clone(), settings.clone())));
@@ -102,21 +95,18 @@ async fn bench_endpoint<O: Operation>(State((_network, query_sender)): State<(Ne
 
     // collect the results
     for f in futures {
-        let data = f.await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        f.await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        measurements.extend_from_slice(&data);
     }
 
-    Ok(Json(measurements))
+    Ok(String::from("success"))
 }
 
 async fn run_client<O: Operation>(
     mut watcher: watch::Receiver<bool>,
     query_sender: mpsc::Sender<(O, oneshot::Sender<QueryResult<O>>)>,
     settings: BenchSettings,
-) -> anyhow::Result<Vec<Measurement>> {
-    let mut measurements = vec![];
-    
+) -> anyhow::Result<()> {
     // wait for the benchmark to start
     watcher.wait_for(|v| *v).await?;
     watcher.mark_unchanged();
@@ -124,8 +114,6 @@ async fn run_client<O: Operation>(
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let query = O::gen_query(&settings, &mut query_state);
-        let op_name = query.name();
-        let start_time = Instant::now();
         let (result_sender, result_receiver) = oneshot::channel();
         query_sender.send((query, result_sender)).await?;
         select! {
@@ -134,7 +122,6 @@ async fn run_client<O: Operation>(
                     if let Some(val) = res.value {
                         O::update_query_state(&mut query_state, val);
                     }
-                    measurements.push(Measurement{latency_micros: start_time.elapsed().as_micros() as usize, op: op_name });
                 }
             },
             // request timeout
@@ -146,5 +133,5 @@ async fn run_client<O: Operation>(
         }
     }
     
-    Ok(measurements)
+    Ok(())
 }

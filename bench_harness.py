@@ -131,11 +131,8 @@ def run_micro(args):
     This is a helper function to run the microbench with multiprocessing.
     """
     try:
-        measurements = requests.post(f"http://{args[1]}/bench", json=args[2], timeout=args[3]).json()
-        return {
-            "measurements": measurements,
-            "node_id": args[0],
-        }
+        resp = requests.post(f"http://{args[1]}/bench", json=args[2], timeout=args[3])
+        return resp.text
     except Exception:
         return None
 
@@ -183,7 +180,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False, write_output
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_micro, args)
                     logs = pool.map(get_logs, args)
-                if None in results:
+                if None in results or None in logs:
                     raise Exception("micro results missing from at least one process")
 
                 # record benchmark measurements
@@ -378,7 +375,7 @@ def measure_rtt_latency(nodes):
     # start a cluster with all nodes
     ensure_cluster_state({
         "proto": "demon",
-        "datatype": "non-neg-counter",
+        "datatype": "rubis",
         "node_ids": [id for id in nodes.keys()],
     }, nodes)
 

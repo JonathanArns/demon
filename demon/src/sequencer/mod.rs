@@ -145,9 +145,13 @@ where
             let mut latch = self.omnipaxos.lock().await;
             latch.tick();
             // flush OmniPaxos messages
-            let messages = latch.outgoing_messages().into_iter().map(|m| {
-                (NodeId(m.get_receiver() as u32), Message{payload: bincode::serialize(&SequencerMsg::<T>::Omnipaxos(m)).unwrap(), component: Component::Sequencer})
-            }).collect::<Vec<_>>();
+            let messages = latch.outgoing_messages().into_iter()
+                .filter(|m| {
+                    // ensure only node 1 can be elected leader
+                    m.get_receiver() == 1 || m.get_sender() == 1
+                }).map(|m| {
+                    (NodeId(m.get_receiver() as u32), Message{payload: bincode::serialize(&SequencerMsg::<T>::Omnipaxos(m)).unwrap(), component: Component::Sequencer})
+                }).collect::<Vec<_>>();
             if messages.len() > 0 {
                 self.network.send_batch(messages).await;
             }

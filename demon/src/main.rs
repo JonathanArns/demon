@@ -47,17 +47,6 @@ async fn main() {
 
     let api = Box::new(HttpApi{});
     match &args.datatype[..] {
-        "or-set" => {
-            match &args.protocol[..] {
-                "demon" => {
-                    protocols::demon::DeMon::<ORSetOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
-                },
-                "causal" => {
-                    protocols::causal::Causal::<ORSetOp>::new(args.cluster_addr.clone(), args.cluster_size, api, args.name.clone()).await;
-                },
-                _ => panic!("unknown protocol {:?}", args.protocol.clone()),
-            };
-        },
         "non-neg-counter" => {
             match &args.protocol[..] {
                 "demon" => {
