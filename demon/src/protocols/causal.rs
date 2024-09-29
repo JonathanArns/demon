@@ -1,6 +1,6 @@
 use crate::{api::{instrumentation::{log_instrumentation, InstrumentationEvent}, API}, causal_replication::{CausalReplication, CausalReplicationEvent}, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, Mutex}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::{self, Receiver}, Mutex}};
 use std::sync::Arc;
 
 use super::{Component, Message, TransactionId};
@@ -66,6 +66,7 @@ impl<O: Operation> Causal<O> {
         api: Box<dyn API<O>>,
     ) {
         let mut api_events = api.start(self.network.clone()).await;
+        let (internal_sender, mut internal_receiver) = mpsc::channel(8000);
         let proto = self.clone();
         tokio::spawn(async move {
             loop {
@@ -82,7 +83,7 @@ impl<O: Operation> Causal<O> {
                     if let Some(shadow) = proto.storage.generate_shadow(query).await {
                         let result = proto.storage.exec(shadow.clone()).await;
                         let _ = result_sender.send(result);
-                        proto.causal_replication.replicate((id, shadow)).await;
+                        internal_sender.send((id, shadow)).await.unwrap();
                     } else {
                         let _ = result_sender.send(QueryResult { value: None });
                     }
@@ -96,6 +97,13 @@ impl<O: Operation> Causal<O> {
                     let result = proto.storage.exec(query).await;
                     let _ = result_sender.send(result);
                 }
+            }
+        });
+        let proto = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let (id, shadow) = internal_receiver.recv().await.unwrap();
+                proto.causal_replication.replicate((id, shadow)).await;
             }
         });
         let proto = self.clone();
