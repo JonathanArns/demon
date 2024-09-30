@@ -101,18 +101,13 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                 }
             },
             CausalReplicationMsg::Entries(e) => {
-                let mut log = self.log.write().await;
                 let mut current_snapshot = self.current_snapshot.lock().await;
-                let mut waiting = self.waiting.lock().await;
                 for entry in e {
-                    if !(entry.causality.included_in(&current_snapshot) && entry.causality.get(from) + 1 > current_snapshot.get(from)) {
-                        self.deliver_waiting(&mut log, &mut waiting, &mut current_snapshot).await;
-                    }
                     if entry.causality.included_in(&current_snapshot) && entry.causality.get(from) + 1 > current_snapshot.get(from) {
                         current_snapshot.increment(entry.from, 1);
-                        log.push_back(entry.clone());
                         self.event_sender.send(CausalReplicationEvent::Deliver(entry)).await.unwrap();
                     } else {
+                        let mut waiting = self.waiting.lock().await;
                         let mut min = current_snapshot.get(from);
                         if min < entry.causality.get(from) {
                             for waiting_entry in waiting.iter() {
@@ -131,9 +126,11 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                             }
                         }
                         waiting.push(Some(entry));
+                        drop(waiting);
                     }
                 }
-                self.deliver_waiting(&mut log, &mut waiting, &mut current_snapshot).await;
+                let mut waiting = self.waiting.lock().await;
+                self.deliver_waiting(&mut waiting, &mut current_snapshot).await;
             },
             CausalReplicationMsg::Missing { from_idx, to_idx } => {
                 let my_id = self.network.my_id().await;
@@ -206,7 +203,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         }
     }
 
-    async fn deliver_waiting(&self, log: &mut VecDeque<TaggedEntry<T>>, waiting: &mut Vec<Option<TaggedEntry<T>>>, snapshot: &mut Snapshot) {
+    async fn deliver_waiting(&self, waiting: &mut Vec<Option<TaggedEntry<T>>>, snapshot: &mut Snapshot) {
         let mut delivered = true;
         while delivered {
             delivered = false;
@@ -216,7 +213,6 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                     if entry.causality.included_in(&snapshot) && entry.causality.get(entry.from) + 1 > snapshot.get(entry.from) {
                         delivered = true;
                         snapshot.increment(entry.from, 1);
-                        log.push_back(entry.clone());
                         self.event_sender.send(CausalReplicationEvent::Deliver(entry)).await.unwrap();
                         waiting[i] = None;
                     }
