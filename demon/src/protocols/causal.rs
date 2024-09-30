@@ -71,32 +71,29 @@ impl<O: Operation> Causal<O> {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 if query.is_writing() {
-                    let protocol = proto.clone();
-                    tokio::task::spawn(async move {
-                        let name = query.name();
-                        let id = protocol.generate_transaction_id().await;
-                        if let Some(shadow) = protocol.storage.generate_shadow(query).await {
-                            #[cfg(feature = "instrument")]
-                            log_instrumentation(InstrumentationEvent{
-                                kind: String::from("initiated"),
-                                val: None,
-                                meta: Some(id.to_string() + " " + &name),
-                            });
+                    let name = query.name();
+                    let id = proto.generate_transaction_id().await;
+                    if let Some(shadow) = proto.storage.generate_shadow(query).await {
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("initiated"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
 
-                            protocol.causal_replication.replicate((id, shadow.clone())).await;
-                            let result = protocol.storage.exec(shadow).await;
-                            let _ = result_sender.send(result);
+                        proto.causal_replication.replicate((id, shadow.clone())).await;
+                        let result = proto.storage.exec(shadow).await;
+                        let _ = result_sender.send(result);
 
-                            #[cfg(feature = "instrument")]
-                            log_instrumentation(InstrumentationEvent{
-                                kind: String::from("visible"),
-                                val: None,
-                                meta: Some(id.to_string() + " " + &name),
-                            });
-                        } else {
-                            let _ = result_sender.send(QueryResult { value: None });
-                        }
-                    });
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("visible"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
+                    } else {
+                        let _ = result_sender.send(QueryResult { value: None });
+                    }
                 } else {
                     let result = proto.storage.exec(query).await;
                     let _ = result_sender.send(result);
