@@ -101,8 +101,8 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                 }
             },
             CausalReplicationMsg::Entries(e) => {
-                let mut current_snapshot = self.current_snapshot.lock().await;
                 let mut log = self.log.write().await;
+                let mut current_snapshot = self.current_snapshot.lock().await;
                 let mut waiting = self.waiting.lock().await;
                 for entry in e {
                     if !(entry.causality.included_in(&current_snapshot) && entry.causality.get(from) + 1 > current_snapshot.get(from)) {
@@ -154,9 +154,10 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
 
     /// Stores and starts replicating an entry in this node's log.
     pub async fn replicate(&self, entry: T) -> TaggedEntry<T> {
+        let mut log = self.log.write().await;
         let tagged_entry = {
-            let my_id = self.network.my_id().await;
             let mut snapshot = self.current_snapshot.lock().await;
+            let my_id = self.network.my_id().await;
             let tagged = TaggedEntry {
                 causality: snapshot.clone(),
                 from: my_id,
@@ -165,19 +166,17 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             snapshot.increment(my_id, 1);
             tagged
         };
-        let mut log = self.log.write().await;
+        log.push_back(tagged_entry.clone());
+        let payload = bincode::serialize(&CausalReplicationMsg::<T>::Entries(vec![tagged_entry.clone()])).unwrap();
+        let msg = Message{component: Component::WeakReplication, payload};
+        self.network.broadcast(msg).await;
         if log.len() >= 1024 * 1024 {
             drop(log);
             self.collect_garbage().await;
             while self.log.read().await.len() >= 1024 * 1024 {
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
-            log = self.log.write().await;
         }
-        log.push_back(tagged_entry.clone());
-        let payload = bincode::serialize(&CausalReplicationMsg::<T>::Entries(vec![tagged_entry.clone()])).unwrap();
-        let msg = Message{component: Component::WeakReplication, payload};
-        self.network.broadcast(msg).await;
         tagged_entry
     }
 
