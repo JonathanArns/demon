@@ -1,6 +1,6 @@
 use crate::{api::{instrumentation::{log_instrumentation, InstrumentationEvent}, API}, causal_replication::{CausalReplication, CausalReplicationEvent}, network::{MsgHandler, Network, NodeId}, rdts::Operation, storage::{basic::Storage, QueryResult}};
 use async_trait::async_trait;
-use tokio::{net::ToSocketAddrs, sync::{mpsc::{self, Receiver}, Mutex}};
+use tokio::{net::ToSocketAddrs, sync::{mpsc::Receiver, Mutex}};
 use std::sync::Arc;
 
 use super::{Component, Message, TransactionId};
@@ -66,44 +66,39 @@ impl<O: Operation> Causal<O> {
         api: Box<dyn API<O>>,
     ) {
         let mut api_events = api.start(self.network.clone()).await;
-        let (internal_sender, mut internal_receiver) = mpsc::channel(8000);
         let proto = self.clone();
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
                 let name = query.name();
                 if query.is_writing() {
-                    let id = proto.generate_transaction_id().await;
-                    #[cfg(feature = "instrument")]
-                    log_instrumentation(InstrumentationEvent{
-                        kind: String::from("initiated"),
-                        val: None,
-                        meta: Some(id.to_string() + " " + &name),
-                    });
-                    if let Some(shadow) = proto.storage.generate_shadow(query).await {
-                        proto.causal_replication.replicate((id, shadow.clone())).await;
-                        internal_sender.send((shadow, result_sender)).await.unwrap();
-                    } else {
-                        let _ = result_sender.send(QueryResult { value: None });
-                    }
-                    #[cfg(feature = "instrument")]
-                    log_instrumentation(InstrumentationEvent{
-                        kind: String::from("visible"),
-                        val: None,
-                        meta: Some(id.to_string() + " " + &name),
+                    let protocol = proto.clone();
+                    tokio::task::spawn(async move {
+                        let id = protocol.generate_transaction_id().await;
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("initiated"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
+                        if let Some(shadow) = protocol.storage.generate_shadow(query).await {
+                            protocol.causal_replication.replicate((id, shadow.clone())).await;
+                            let result = protocol.storage.exec(shadow).await;
+                            let _ = result_sender.send(result);
+                        } else {
+                            let _ = result_sender.send(QueryResult { value: None });
+                        }
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("visible"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
                     });
                 } else {
                     let result = proto.storage.exec(query).await;
                     let _ = result_sender.send(result);
                 }
-            }
-        });
-        let proto = self.clone();
-        tokio::spawn(async move {
-            loop {
-                let (shadow, result_sender) = internal_receiver.recv().await.unwrap();
-                let result = proto.storage.exec(shadow).await;
-                let _ = result_sender.send(result);
             }
         });
         let proto = self.clone();
