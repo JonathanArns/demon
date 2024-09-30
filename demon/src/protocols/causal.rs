@@ -81,9 +81,8 @@ impl<O: Operation> Causal<O> {
                         meta: Some(id.to_string() + " " + &name),
                     });
                     if let Some(shadow) = proto.storage.generate_shadow(query).await {
-                        let result = proto.storage.exec(shadow.clone()).await;
-                        let _ = result_sender.send(result);
-                        internal_sender.send((id, shadow)).await.unwrap();
+                        proto.causal_replication.replicate((id, shadow.clone())).await;
+                        internal_sender.send((shadow, result_sender)).await.unwrap();
                     } else {
                         let _ = result_sender.send(QueryResult { value: None });
                     }
@@ -102,8 +101,9 @@ impl<O: Operation> Causal<O> {
         let proto = self.clone();
         tokio::spawn(async move {
             loop {
-                let (id, shadow) = internal_receiver.recv().await.unwrap();
-                proto.causal_replication.replicate((id, shadow)).await;
+                let (shadow, result_sender) = internal_receiver.recv().await.unwrap();
+                let result = proto.storage.exec(shadow).await;
+                let _ = result_sender.send(result);
             }
         });
         let proto = self.clone();
