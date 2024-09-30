@@ -40,7 +40,8 @@ pub struct CausalReplication<T> {
     network: Network<Message>,
     event_sender: Sender<CausalReplicationEvent<T>>,
     log: Arc<RwLock<VecDeque<TaggedEntry<T>>>>,
-    waiting: Arc<Mutex<Vec<Option<TaggedEntry<T>>>>>,
+    waiting: Arc<Mutex<Vec<VecDeque<TaggedEntry<T>>>>>,
+    to_send: Arc<Mutex<usize>>,
     current_snapshot: Arc<Mutex<Snapshot>>,
     peer_snapshots: Arc<Mutex<HashMap<NodeId, Snapshot>>>,
     quorum_replicated_snapshot: Arc<Mutex<Snapshot>>,
@@ -55,6 +56,7 @@ impl<T> Clone for CausalReplication<T> {
             event_sender: self.event_sender.clone(),
             log: self.log.clone(),
             waiting: self.waiting.clone(),
+            to_send: self.to_send.clone(),
             quorum_replicated_snapshot: self.quorum_replicated_snapshot.clone(),
             current_snapshot: self.current_snapshot.clone(),
             peer_snapshots: self.peer_snapshots.clone(),
@@ -70,6 +72,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         let (sender, receiver) = channel(1000);
 
         let nodes = network.nodes().await;
+        let peers = network.peers().await;
         let current_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let peer_snapshots = Arc::new(Mutex::new(HashMap::new()));
@@ -78,13 +81,15 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             network,
             event_sender: sender,
             log: Default::default(),
-            waiting: Default::default(),
+            waiting: Arc::new(Mutex::new(vec![VecDeque::new(); peers.len()])),
+            to_send: Default::default(),
             quorum_replicated_snapshot,
             current_snapshot,
             peer_snapshots,
             quorum_size,
             _phantom: PhantomData,
         };
+        tokio::task::spawn(causal_replication.clone().flush_batch());
         tokio::task::spawn(causal_replication.clone().run_gossip());
         tokio::task::spawn(causal_replication.clone().run_gc());
         (causal_replication, receiver)
@@ -110,12 +115,10 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                         let mut waiting = self.waiting.lock().await;
                         let mut min = current_snapshot.get(from);
                         if min < entry.causality.get(from) {
-                            for waiting_entry in waiting.iter() {
-                                if let Some(waiting_entry) = waiting_entry {
-                                    let seq = waiting_entry.causality.get(from);
-                                    if seq > min && seq < entry.causality.get(from) {
-                                        min = seq;
-                                    }
+                            if let Some(waiting_entry) = waiting[from.0 as usize - 1].back() {
+                                let seq = waiting_entry.causality.get(from);
+                                if seq > min && seq < entry.causality.get(from) {
+                                    min = seq;
                                 }
                             }
                             if min+1 < entry.causality.get(from) {
@@ -125,7 +128,16 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                                 }).await;
                             }
                         }
-                        waiting.push(Some(entry));
+                        let queue = &mut waiting[from.0 as usize - 1];
+                        let mut i = queue.len();
+                        while i > 0 {
+                            if queue[i - 1].causality.get(from) < entry.causality.get(from) {
+                                break
+                            } else {
+                                i -= 1;
+                            }
+                        }
+                        queue.insert(i, entry);
                         drop(waiting);
                     }
                 }
@@ -164,9 +176,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             tagged
         };
         log.push_back(tagged_entry.clone());
-        let payload = bincode::serialize(&CausalReplicationMsg::<T>::Entries(vec![tagged_entry.clone()])).unwrap();
-        let msg = Message{component: Component::WeakReplication, payload};
-        self.network.broadcast(msg).await;
+        *self.to_send.lock().await += 1;
         if log.len() >= 1024 * 1024 {
             drop(log);
             self.collect_garbage().await;
@@ -203,42 +213,17 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         }
     }
 
-    async fn deliver_waiting(&self, waiting: &mut Vec<Option<TaggedEntry<T>>>, snapshot: &mut Snapshot) {
-        let mut delivered = true;
-        while delivered {
-            delivered = false;
-            let mut i = 0;
-            while i < waiting.len() {
-                if let Some(entry) = waiting[i].clone() {
-                    if entry.causality.included_in(&snapshot) && entry.causality.get(entry.from) + 1 > snapshot.get(entry.from) {
-                        delivered = true;
+    async fn deliver_waiting(&self, waiting: &mut Vec<VecDeque<TaggedEntry<T>>>, snapshot: &mut Snapshot) {
+        for queue in waiting {
+            while let Some(entry) = queue.pop_front() {
+                if entry.causality.included_in(&snapshot) {
+                    if entry.causality.get(entry.from) + 1 > snapshot.get(entry.from) {
                         snapshot.increment(entry.from, 1);
                         self.event_sender.send(CausalReplicationEvent::Deliver(entry)).await.unwrap();
-                        waiting[i] = None;
                     }
-                }
-                i += 1;
-            }
-        }
-        *waiting = waiting.iter().filter(|e| e.is_some()).map(|e| e.to_owned()).collect();
-    }
-
-    async fn do_retries(&self) {
-        let snapshot = self.current_snapshot.lock().await;
-        let waiting = self.waiting.lock().await;
-        for peer in self.network.peers().await {
-            let from_idx = snapshot.get(peer) + 1;
-            if let Some(to_idx) = waiting.iter()
-                .filter(|e| e.is_some())
-                .map(|e| e.as_ref().unwrap())
-                .filter(|e| e.from == peer)
-                .map(|e| e.causality.get(peer) + 1)
-                .min() {
-                if from_idx < to_idx - 1 {
-                    self.network.send(peer, Message{
-                        component: Component::WeakReplication,
-                        payload: bincode::serialize(&CausalReplicationMsg::<T>::Missing{ from_idx, to_idx }).unwrap(),
-                    }).await;
+                } else {
+                    queue.push_front(entry);
+                    break
                 }
             }
         }
@@ -273,12 +258,24 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
     }
 
     /// Periodically broadcast current snapshot.
-    ///
-    /// Should be called with a cloned handle to the sequencer.
     async fn run_gossip(self) {
         loop {
             tokio::time::sleep(Duration::from_millis(23)).await;
             let payload = bincode::serialize(&CausalReplicationMsg::<T>::Snapshot(self.current_snapshot.lock().await.clone())).unwrap();
+            let msg = Message{component: Component::WeakReplication, payload};
+            self.network.broadcast(msg).await;
+        }
+    }
+
+    /// Sends new entries in a batch.
+    async fn flush_batch(self) {
+        loop {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let log = self.log.write().await;
+            let mut to_send = self.to_send.lock().await;
+            let entries = log.range((log.len() - *to_send)..log.len()).map(|x| x.to_owned()).collect();
+            *to_send = 0;
+            let payload = bincode::serialize(&CausalReplicationMsg::<T>::Entries(entries)).unwrap();
             let msg = Message{component: Component::WeakReplication, payload};
             self.network.broadcast(msg).await;
         }
@@ -291,7 +288,6 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         loop {
             tokio::time::sleep(Duration::from_millis(1000)).await;
             self.collect_garbage().await;
-            self.do_retries().await;
         }
     }
 }
