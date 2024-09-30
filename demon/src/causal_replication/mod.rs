@@ -105,11 +105,13 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                 let mut log = self.log.write().await;
                 let mut waiting = self.waiting.lock().await;
                 for entry in e {
+                    if !(entry.causality.included_in(&current_snapshot) && entry.causality.get(from) + 1 > current_snapshot.get(from)) {
+                        self.deliver_waiting(&mut log, &mut waiting, &mut current_snapshot).await;
+                    }
                     if entry.causality.included_in(&current_snapshot) && entry.causality.get(from) + 1 > current_snapshot.get(from) {
                         current_snapshot.increment(entry.from, 1);
                         log.push_back(entry.clone());
                         self.event_sender.send(CausalReplicationEvent::Deliver(entry)).await.unwrap();
-                        self.deliver_waiting(&mut log, &mut waiting, &mut current_snapshot).await;
                     } else {
                         let mut min = current_snapshot.get(from);
                         if min < entry.causality.get(from) {
@@ -131,6 +133,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
                         waiting.push(Some(entry));
                     }
                 }
+                self.deliver_waiting(&mut log, &mut waiting, &mut current_snapshot).await;
             },
             CausalReplicationMsg::Missing { from_idx, to_idx } => {
                 let my_id = self.network.my_id().await;
