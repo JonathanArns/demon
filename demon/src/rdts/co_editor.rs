@@ -187,29 +187,29 @@ impl Operation for EditorOp {
 
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
         if !state.has_permission(self) {
-            return None
+            return Some(Self::ReadVal::Unauthorized)
         }
         match *self {
             Self::Insert { at, ref text, .. } => {
                 state.buffer.insert(at, text);
-                None
+                Some(Self::ReadVal::Length(state.buffer.len_chars()))
             },
             Self::InsertShadow { ref crdt, ref text, .. } => {
                 if let Some(offset) = state.replica.integrate_insertion(crdt) {
                     state.buffer.insert(offset, text);
                 }
-                None
+                Some(Self::ReadVal::Length(state.buffer.len_chars()))
             },
             Self::Delete { at, ref length, .. } => {
                 state.buffer.remove(at..(at+length));
-                None
+                Some(Self::ReadVal::Length(state.buffer.len_chars()))
             },
             Self::DeleteShadow { ref crdt, .. } => {
                 let ranges = state.replica.integrate_deletion(crdt);
                 for range in ranges {
                     state.buffer.remove(range);
                 }
-                None
+                Some(Self::ReadVal::Length(state.buffer.len_chars()))
             },
             Self::ChangeRole { ref target_user, ref role, .. } | Self::CreateUser { ref target_user, ref role, .. } => {
                 state.user_roles.insert(target_user.to_owned(), role.to_owned());
