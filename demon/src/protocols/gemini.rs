@@ -105,25 +105,27 @@ impl<O: Operation> Gemini<O> {
     async fn sequence_red(&self, op: O, transaction_id: TransactionId) -> Option<(usize, ShadowOp<O>)> {
         let id;
         loop {
-            let mut latch = self.next_red_sequence.lock().await;
-            if let Some(ref mut seq) = *latch {
-                let (applied, _) = *self.waiting_red_ops.lock().await;
-                if applied == *seq {
-                    // now we are allowed to process red ops locally
-                    if let Some(shadow) = self.storage.generate_shadow(op).await {
-                        id = *seq;
-                        *seq += 1;
-                        return Some((id, ShadowOp::Red {
-                            seq: id,
-                            op: shadow,
-                            id: transaction_id,
-                        }))
-                    } else {
-                        return None
+            {
+                let mut latch = self.next_red_sequence.lock().await;
+                if let Some(ref mut seq) = *latch {
+                    let (applied, _) = *self.waiting_red_ops.lock().await;
+                    if applied == *seq {
+                        // now we are allowed to process red ops locally
+                        if let Some(shadow) = self.storage.generate_shadow(op).await {
+                            id = *seq;
+                            *seq += 1;
+                            return Some((id, ShadowOp::Red {
+                                seq: id,
+                                op: shadow,
+                                id: transaction_id,
+                            }))
+                        } else {
+                            return None
+                        }
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
