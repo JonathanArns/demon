@@ -198,14 +198,14 @@ impl<O: Operation> Gemini<O> {
                 } else {
                     // weak operation
                     if query.is_writing() {
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("initiated"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
                         let result = if let Some(shadow) = proto.storage.generate_shadow(query).await {
                             if shadow.is_writing() {
-                                #[cfg(feature = "instrument")]
-                                log_instrumentation(InstrumentationEvent{
-                                    kind: String::from("initiated"),
-                                    val: None,
-                                    meta: Some(id.to_string() + " " + &name),
-                                });
                                 let tagged_op = ShadowOp::Blue(id, shadow.clone());
                                 proto.causal_replication.replicate(tagged_op).await;
                             }
@@ -213,6 +213,12 @@ impl<O: Operation> Gemini<O> {
                         } else {
                             QueryResult { value: None }
                         };
+                        #[cfg(feature = "instrument")]
+                        log_instrumentation(InstrumentationEvent{
+                            kind: String::from("visible"),
+                            val: None,
+                            meta: Some(id.to_string() + " " + &name),
+                        });
                         let _ = result_sender.send(result);
                     } else {
                         let result = proto.storage.exec(query).await;
