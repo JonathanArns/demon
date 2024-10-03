@@ -41,7 +41,6 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
     except Exception:
         bench_state = {
             "finished_benches": [],
-            "rtt_latencies": measure_rtt_latency(nodes) if latencies else None,
         }
 
     # forget results from protocols that should be run again
@@ -58,13 +57,13 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             if filename in bench_state["finished_benches"]:
                 continue
             run_bench(bench_config, nodes, silent, always_load, write_output, filepath)
+            stop_servers(bench_config["cluster_config"], nodes)
+            time.sleep(bench_config["settings"]["duration"])
             bench_state["finished_benches"].append(filename)
             if write_output:
                 with open(os.path.join(output_dir, "bench_state.json"), "w") as file:
                     json.dump(bench_state, file, indent=4)
 
-    if current_cluster_config:
-        stop_servers(current_cluster_config, nodes)
     print("done")
     
 def expand_multi_bench_config(multi_config):
@@ -179,6 +178,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False, write_output
                 args = [(id, f"{nodes[id]['ip']}:{nodes[id]['db_port']}", bench_config["settings"], 2 * bench_config["settings"]["duration"]) for id in bench_config["cluster_config"]["node_ids"]]
                 with Pool(processes=len(args)) as pool:
                     results = pool.map(run_micro, args)
+                    time.sleep(20)
                     logs = pool.map(get_logs, args)
                 if None in results or None in logs:
                     raise Exception("micro results missing from at least one process")
@@ -191,6 +191,7 @@ def run_bench(bench_config, nodes, silent=False, always_load=False, write_output
                         data["unix_micros"] = value["unix_micros"]
                         data["kind"] = value["kind"]
                         data["meta"] = value["meta"]
+                        data["val"] = value["val"]
                         data["node"] = exp["node_id"]
                         data["datatype"] = bench_config["cluster_config"]["datatype"]
                         data["proto"] = bench_config["cluster_config"]["proto"]
@@ -352,7 +353,14 @@ def start_servers(cluster_config, nodes):
                 root_addr = f"{node['internal_ip']}:{node['internal_port']}"
         else:
             config["addr"] = root_addr
-        requests.post(f"http://{node['ip']}:{node['control_port']}/start", json=config, timeout=3)
+        attempts = 0
+        while attempts < 5:
+            try:
+                requests.post(f"http://{node['ip']}:{node['control_port']}/start", json=config, timeout=3)
+                break
+            except:
+                attempts += 1
+                time.sleep(attempts)
 
     time.sleep(1)
 
@@ -371,7 +379,7 @@ def start_servers(cluster_config, nodes):
     # just to make sure everything had more than enough time to be fully running
     time.sleep(1)
 
-def measure_rtt_latency(nodes):
+def measure_rtt_latency(nodes, dir_path):
     # start a cluster with all nodes
     ensure_cluster_state({
         "proto": "demon",
@@ -380,13 +388,22 @@ def measure_rtt_latency(nodes):
     }, nodes)
 
     latencies = {}
+    rows = []
     for id, node in nodes.items():
-        resp = requests.get(f"http://{node['ip']}:{node['db_port']}/measure_rtt_latency", timeout=10)
-        measurements = resp.json()
-        latencies[id] = {}
-        for item in measurements:
-            latencies[id][item[1]] = item[2]
-    return latencies
+        for i in range(100):
+            resp = requests.get(f"http://{node['ip']}:{node['db_port']}/measure_rtt_latency", timeout=10)
+            measurements = resp.json()
+            row = {
+                "from": id,
+            }
+            for item in measurements:
+                millis = item[2]["secs"] * 1000 + item[2]["nanos"] / 1000000
+                row[item[1]] = millis
+            rows.append(row)
+            print(f"{i}/100 for {id}")
+    df = pd.DataFrame(rows)
+    df = df.groupby(["from"]).mean()
+    df.to_csv(os.path.join(dir_path, "mean_rtt.csv"))
 
 def set_latency(ms, nodes):
     for node in nodes.values():
@@ -431,6 +448,17 @@ if __name__ == "__main__":
     if "--reuse" in args:
         args.remove("--reuse")
         always_load = False
+    if "rtt" in args:
+        try:
+            os.mkdir(output_dir)
+        except Exception as e:
+            pass
+        with open(args[0], 'r') as file:
+            data = json.load(file)
+        nodes = data["nodes"]
+        measure_rtt_latency(nodes, output_dir)
+        exit()
+
 
     if len(args) < 1:
         print("argument required to specify input file")
