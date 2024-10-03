@@ -72,7 +72,6 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
         let (sender, receiver) = channel(1000);
 
         let nodes = network.nodes().await;
-        let peers = network.peers().await;
         let current_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let quorum_replicated_snapshot = Arc::new(Mutex::new(Snapshot::new(&nodes)));
         let peer_snapshots = Arc::new(Mutex::new(HashMap::new()));
@@ -81,7 +80,7 @@ where T: 'static + Clone + Serialize + DeserializeOwned + Send + Sync {
             network,
             event_sender: sender,
             log: Default::default(),
-            waiting: Arc::new(Mutex::new(vec![VecDeque::new(); peers.len()])),
+            waiting: Arc::new(Mutex::new(vec![VecDeque::new(); nodes.len()])),
             to_send: Default::default(),
             quorum_replicated_snapshot,
             current_snapshot,

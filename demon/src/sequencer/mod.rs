@@ -54,6 +54,7 @@ where
     pub async fn new(network: Network<Message>) -> (Self, Receiver<SequencerEvent<T>>) {
         let configuration_id = 1;
         let my_id = network.my_id().await;
+        println!("Members of paxos cluster: {:?}", network.nodes().await);
         let server_config = ServerConfig {
             pid: my_id.0.into(),
             election_tick_timeout: 100,
