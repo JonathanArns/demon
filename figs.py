@@ -1,7 +1,6 @@
 import os
 import sys
 import matplotlib.pyplot as plt
-import dask.dataframe as dd
 import pandas as pd
 import numpy as np
 import scipy.stats as st
@@ -255,25 +254,27 @@ def plot_rubis_violin(df, dir_path, duration=60, cluster_size=5, num_clients=Non
     pass
 
 def plot_conflict_histogram(dir_path):
-    df = pd.read_csv(os.path.join(dir_path, "rubis_strict_5nodes_60s_4000clients_1strong_1keys.csv"))
+    pd.options.mode.chained_assignment = None
+    df = pd.read_csv(os.path.join(dir_path, "rubis_strict_5nodes_60s_3000clients_1strong_3keys.csv"))
     df["op"] = df["meta"].str.split(" ").str.get(1)
     init = df[df["kind"] == "initiated"]
-    # client = init.merge(df[df["kind"] == "visible"][["meta", "node", "unix_micros"]], on=["meta", "node"], suffixes=("", "_client_visible"))
-    # client["client_latency"] = (client["unix_micros_client_visible"] - client["unix_micros"]) / 1000
-
     last_visible = df[df["kind"] == "visible"].sort_values(by=["unix_micros"]).drop_duplicates(subset=["meta"], keep="last")
     remote = init.merge(last_visible[["meta", "unix_micros"]], on=["meta"], suffixes=("", "_end"))
     remote["remote_latency"] = (remote["unix_micros_end"] - remote["unix_micros"]) / 1000
     remote.index = pd.IntervalIndex.from_arrays(remote["unix_micros"], remote["unix_micros_end"])
     remote["conflicts"] = 0
-    bids = remote.loc[remote["op"] == "Bid"]
-    closeAuctions = remote.loc[remote["op"] == "CloseAuction"]
+    bids = remote.loc[remote["op"] == "Bid"].copy(deep=True)
+    bids["auction_id"] = bids["meta"].str.split(" ").str.get(2)
+    closeAuctions = remote.loc[remote["op"] == "CloseAuction"].copy(deep=True)
+    closeAuctions["auction_id"] = closeAuctions["meta"].str.split(" ").str.get(2)
 
     i = 0
     for interval in closeAuctions.index.values:
-        overlaps = bids.index.overlaps(interval).astype(int)
-        closeAuctions["conflicts"].iloc[i] = overlaps.sum()
-        bids["conflicts"] += overlaps
+        auction_id = closeAuctions.loc[interval]["auction_id"]
+        overlaps = bids.index.overlaps(interval)
+        conflicts = overlaps & (bids["auction_id"] == auction_id)
+        closeAuctions.loc[i, "conflicts"] = conflicts.astype(int).sum()
+        bids["conflicts"] += conflicts.astype(int)
         i += 1
 
     plt.figure(figsize=(4, 4))  # Adjust size as needed
@@ -322,24 +323,25 @@ if __name__ == "__main__":
     path = args[0]
     figure = args[1]
 
-    df = aggregate(path, recompute)
     if figure == "histogram":
         plot_conflict_histogram(path)
     elif figure == "latency-dist":
         plot_rubis_cumulative_latency_dist(path)
-    elif figure == "rubis-lines":
-        plot_rubis_lines(df, path)
-    elif figure == "rubis-unstable":
-        plot_rubis_unstable_ops(df, path)
-    elif figure == "rubis-latency-bars":
-        plot_latency_bars(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, limit=2000, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
-    elif figure == "strong-ratio":
-        plot_strong_ratio(df, path)
-    elif figure == "scaling":
-        plot_scaling(df, path, datatype="rubis", duration=60, num_clients=2000)
-    elif figure == "non-neg-latency-bars":
-        plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
-    elif figure == "co-editor-latency-bars":
-        plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "ChangeRole"], limit=2000)
     else:
-        print("not a known figure name")
+        df = aggregate(path, recompute)
+        if figure == "rubis-lines":
+            plot_rubis_lines(df, path)
+        elif figure == "rubis-unstable":
+            plot_rubis_unstable_ops(df, path)
+        elif figure == "rubis-latency-bars":
+            plot_latency_bars(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, limit=2000, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
+        elif figure == "strong-ratio":
+            plot_strong_ratio(df, path)
+        elif figure == "scaling":
+            plot_scaling(df, path, datatype="rubis", duration=60, num_clients=2000)
+        elif figure == "non-neg-latency-bars":
+            plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
+        elif figure == "co-editor-latency-bars":
+            plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "ChangeRole"], limit=2000)
+        else:
+            print("not a known figure name")
