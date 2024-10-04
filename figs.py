@@ -322,7 +322,7 @@ if __name__ == "__main__":
     path = args[0]
     figure = args[1]
 
-    df = aggregate(benches, path, recompute)
+    df = aggregate(path, recompute)
     if figure == "histogram":
         plot_conflict_histogram(path)
     elif figure == "latency-dist":
