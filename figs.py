@@ -55,8 +55,12 @@ LABELS = {
 PROTOS = ["demon", "gemini", "redblue", "unistore", "strict", "causal"]
 
 
-def aggregate(benches, dir_path, recompute=True):
+def aggregate(dir_path, recompute=True):
     if recompute:
+        with open(os.path.join(dir_path, "bench_state.json"), "r") as file:
+            bench_state = json.load(file)
+        benches = bench_state["finished_benches"]
+
         aggregate = []
         for filename in benches:
             df = pd.read_csv(os.path.join(dir_path, filename))
@@ -148,6 +152,7 @@ def plot_scaling(df, dir_path, datatype="", duration=60, num_clients=2000, limit
     df = df[df["datatype"] == datatype]
     df = df[df["duration"] == duration]
     df = df[df["num_clients"] == num_clients]
+    # df = df[(df["num_clients"] == 3333) | (df["num_clients"] == 1429) | ((df["num_clients"] == 2000) & (df["cluster_size"] == 5))]
     cluster_sizes = [3, 5, 7]
     index = np.arange(len(cluster_sizes))
     bar_width = 1
@@ -169,7 +174,6 @@ def plot_scaling(df, dir_path, datatype="", duration=60, num_clients=2000, limit
         plt.xticks([x for x in range(len(cluster_sizes))], cluster_sizes)
         plt.xlabel("number of regions")
         plt.ylabel(f"mean {kind} latency (ms)")
-        plt.legend(fontsize="large")
         plt.savefig(os.path.join(dir_path, f"{kind}-latency-scaling.png"), dpi=300)
 
     plt.figure(figsize=(2 * len(cluster_sizes), 6))
@@ -188,7 +192,6 @@ def plot_scaling(df, dir_path, datatype="", duration=60, num_clients=2000, limit
     plt.xticks([x for x in range(len(cluster_sizes))], cluster_sizes)
     plt.xlabel("number of regions")
     plt.ylabel(f"throughput (txn/s)")
-    plt.legend(fontsize="large")
     plt.savefig(os.path.join(dir_path, f"throughput-scaling.png"), dpi=300)
 
 
@@ -263,8 +266,8 @@ def plot_conflict_histogram(dir_path):
     remote["remote_latency"] = (remote["unix_micros_end"] - remote["unix_micros"]) / 1000
     remote.index = pd.IntervalIndex.from_arrays(remote["unix_micros"], remote["unix_micros_end"])
     remote["conflicts"] = 0
-    bids = remote[remote["op"] == "Bid"]
-    closeAuctions = remote[remote["op"] == "CloseAuction"]
+    bids = remote.loc[remote["op"] == "Bid"]
+    closeAuctions = remote.loc[remote["op"] == "CloseAuction"]
 
     i = 0
     for interval in closeAuctions.index.values:
@@ -286,6 +289,26 @@ def plot_conflict_histogram(dir_path):
     plt.savefig(os.path.join(dir_path, f"conflict_histogram_closeauction.png"), dpi=300)
 
 
+def plot_rubis_cumulative_latency_dist(dir_path):
+    for kind in ["client", "remote"]:
+        plt.figure(figsize=(4, 4))  # Adjust size as needed
+        for proto in ["demon", "causal", "redblue", "gemini", "unistore", "strict"]:
+            df = pd.read_csv(os.path.join(dir_path, f"rubis_{proto}_5nodes_60s_100clients_1strong_1keys.csv"))
+            init = df[df["kind"] == "initiated"]
+            if kind == "client":
+                merged = init.merge(df[df["kind"] == "visible"][["meta", "node", "unix_micros"]], on=["meta", "node"], suffixes=("", "_end"))
+            else:
+                last_visible = df[df["kind"] == "visible"].sort_values(by=["unix_micros"]).drop_duplicates(subset=["meta"], keep="last")
+                merged = init.merge(last_visible[["meta", "unix_micros"]], on=["meta"], suffixes=("", "_end"))
+            merged["latency"] = (merged["unix_micros_end"] - merged["unix_micros"]) / 1000
+
+            plt.ecdf(merged["latency"], label=LABELS[proto], color=COLORS[proto])
+        plt.xscale("log")
+        plt.xlabel("latency (ms)")
+        plt.ylabel("probability")
+        plt.savefig(os.path.join(dir_path, f"{kind}_latency_distribution.png"), dpi=300)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("argument required to specify input directory")
@@ -299,13 +322,11 @@ if __name__ == "__main__":
     path = args[0]
     figure = args[1]
 
-    with open(os.path.join(path, "bench_state.json"), "r") as file:
-        bench_state = json.load(file)
-    benches = bench_state["finished_benches"]
-
     df = aggregate(benches, path, recompute)
     if figure == "histogram":
         plot_conflict_histogram(path)
+    elif figure == "latency-dist":
+        plot_rubis_cumulative_latency_dist(path)
     elif figure == "rubis-lines":
         plot_rubis_lines(df, path)
     elif figure == "rubis-unstable":
@@ -315,11 +336,10 @@ if __name__ == "__main__":
     elif figure == "strong-ratio":
         plot_strong_ratio(df, path)
     elif figure == "scaling":
-        plot_scaling(df, path, datatype="rubis", duration=60, num_clients=1000)
+        plot_scaling(df, path, datatype="rubis", duration=60, num_clients=2000)
     elif figure == "non-neg-latency-bars":
         plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
     elif figure == "co-editor-latency-bars":
-        # plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "Delete", "ChangeRole"])
         plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "ChangeRole"], limit=2000)
     else:
         print("not a known figure name")
