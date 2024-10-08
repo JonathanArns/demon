@@ -58,7 +58,7 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     fn update_query_state(_state: &mut Self::QueryState, _val: Self::ReadVal) {}
     /// Used to record operation names in measurements.
     fn name(&self) -> String {
-        unimplemented!("must implement to support benchmarks")
+        String::from("")
     }
     /// Parse a query string to an operation, or return None for bad queries.
     fn parse(_text: &str) -> anyhow::Result<Self> {
