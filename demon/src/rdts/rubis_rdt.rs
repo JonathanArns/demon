@@ -188,7 +188,7 @@ impl Operation for RubisOp {
         unimplemented!("please use the bench endpoint")
     }
 
-    fn generate_shadow(&self, _state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow(&self, _state: &Self::State) -> Option<Self> {
         match *self {
             Self::RegisterUser{..} => Some(self.clone()),
 

@@ -109,7 +109,7 @@ impl Operation for NonNegativeCounterOp {
     }
 
     /// Subtract only generates a shadow op, if the counter value is large enough.
-    fn generate_shadow(&self, state: &mut State) -> Option<Self> {
+    fn generate_shadow(&self, state: &State) -> Option<Self> {
         match *self {
             Self::Read { .. } => Some(self.clone()),
             Self::Add { .. } => Some(self.clone()),

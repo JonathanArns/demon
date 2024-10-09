@@ -16,7 +16,7 @@ mod protocols;
 use clap::Parser;
 
 use api::http::HttpApi;
-use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp, or_set::ORSetOp, rubis_rdt::RubisOp, co_editor::EditorOp};
+use rdts::{counters::CounterOp, non_negative_counter::NonNegativeCounterOp, tpcc::TpccOp, rubis_rdt::RubisOp, co_editor::EditorOp};
 
 use tokio::{select, signal::unix::{signal, SignalKind}, sync::watch};
 

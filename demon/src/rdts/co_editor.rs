@@ -218,7 +218,7 @@ impl Operation for EditorOp {
         }
     }
 
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow_mut(&self, state: &mut Self::State) -> Option<Self> {
         match *self {
             Self::Insert { at, ref text, ref user } => Some(Self::InsertShadow {
                 crdt: state.replica.create_insertion(at, text.len()),

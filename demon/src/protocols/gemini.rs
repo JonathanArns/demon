@@ -105,23 +105,28 @@ impl<O: Operation> Gemini<O> {
     async fn sequence_red(&self, op: O, transaction_id: TransactionId) -> Option<(usize, ShadowOp<O>)> {
         let id;
         loop {
-            {
+            { // wait till we hold the red token
                 let mut latch = self.next_red_sequence.lock().await;
                 if let Some(ref mut seq) = *latch {
-                    let (applied, _) = *self.waiting_red_ops.lock().await;
-                    if applied == *seq {
-                        // now we are allowed to process red ops locally
-                        if let Some(shadow) = self.storage.generate_shadow(op).await {
-                            id = *seq;
-                            *seq += 1;
-                            return Some((id, ShadowOp::Red {
-                                seq: id,
-                                op: shadow,
-                                id: transaction_id,
-                            }))
-                        } else {
-                            return None
+                    loop {
+                        { // wait till we have processed all previous red ops
+                            let (applied, _) = *self.waiting_red_ops.lock().await;
+                            if applied == *seq {
+                                // now we are allowed to process red ops locally
+                                if let Some(shadow) = self.storage.generate_shadow(op).await {
+                                    id = *seq;
+                                    *seq += 1;
+                                    return Some((id, ShadowOp::Red {
+                                        seq: id,
+                                        op: shadow,
+                                        id: transaction_id,
+                                    }))
+                                } else {
+                                    return None
+                                }
+                            }
                         }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
             }
@@ -148,19 +153,18 @@ impl<O: Operation> Gemini<O> {
     /// Queues a sequenced red operation for execution
     async fn process_red_shadow_op(&self, rbop: ShadowOp<O>) {
         if let ShadowOp::Red {op, seq, id} = rbop {
-            let name = op.name();
             let mut clients = self.waiting_red_clients.lock().await;
             let mut latch = self.waiting_red_ops.lock().await;
             latch.1.insert(seq, (id, op));
             let mut next_seq = latch.0;
-            while let Some((id, op)) = latch.1.remove(&next_seq) {
-                let output = self.storage.exec(op).await;
+            while let Some((next_id, next_op)) = latch.1.remove(&next_seq) {
+                let output = self.storage.exec(next_op.clone()).await;
 
                 #[cfg(feature = "instrument")]
                 log_instrumentation(InstrumentationEvent{
                     kind: String::from("visible"),
                     val: None,
-                    meta: Some(id.to_string() + " " + &name),
+                    meta: Some(next_id.to_string() + " " + &next_op.name()),
                 });
 
                 if let Some(sender) = clients.remove(&next_seq) {

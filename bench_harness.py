@@ -57,7 +57,8 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             if filename in bench_state["finished_benches"]:
                 continue
             run_bench(bench_config, nodes, silent, always_load, write_output, filepath)
-            stop_servers(bench_config["cluster_config"], nodes)
+            if always_load:
+                stop_servers(bench_config["cluster_config"], nodes)
             time.sleep(bench_config["settings"]["duration"])
             bench_state["finished_benches"].append(filename)
             if write_output:

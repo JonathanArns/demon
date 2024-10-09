@@ -28,7 +28,12 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Used to turn client operations into shadow operations.
     /// Must not perform client-visible state mutations, but may perform "bookkeeping" for CRDT
     /// correctness.
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self>;
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+        Some(self.clone())
+    }
+    fn generate_shadow_mut(&self, state: &mut Self::State) -> Option<Self> {
+        self.generate_shadow(state)
+    }
 
     // optional methods for DeMon, to tune the protocol and minimize rollbacks to conflicting operations
 
