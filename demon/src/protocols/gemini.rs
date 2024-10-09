@@ -33,6 +33,7 @@ pub struct Gemini<O: Operation> {
     /// (next_seq_to_apply, seq -> op)
     waiting_red_ops: Arc<Mutex<(usize, HashMap<usize, (TransactionId, O)>)>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
+    duration: Duration,
 }
 
 #[async_trait]
@@ -49,7 +50,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
                 tokio::task::spawn(Self::forward_token_after_duration(
                     self.next_red_sequence.clone(),
                     self.network.clone(),
-                    Duration::from_millis(50)
+                    self.duration,
                 ));
             }
         }
@@ -58,7 +59,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
 
 impl<O: Operation> Gemini<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>, arg: Option<usize>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
         let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
@@ -76,6 +77,7 @@ impl<O: Operation> Gemini<O> {
             waiting_red_clients: Default::default(),
             waiting_red_ops: Default::default(),
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
+            duration: Duration::from_millis(arg.unwrap_or(25) as u64),
         });
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(

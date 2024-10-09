@@ -78,6 +78,8 @@ def expand_multi_bench_config(multi_config):
                 "datatype": datatype,
                 "node_ids": multi_config["cluster_config"]["node_ids"]
             }
+            if "proto_arg" in multi_config["cluster_config"]:
+                cluster_config["proto_arg"] = multi_config["cluster_config"]["proto_arg"]
             
             if "micro" == multi_config["type"]:
                 for settings in expand_micro_bench_settings(multi_config["settings"]):
