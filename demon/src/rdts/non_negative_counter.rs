@@ -143,7 +143,7 @@ impl Operation for NonNegativeCounterOp {
             },
             Self::Subtract { key, val } => {
                 if let Some(v) = state.get_mut(&key) {
-                    if *v <= val {
+                    if *v >= val {
                         *v -= val;
                     }
                 } else {
