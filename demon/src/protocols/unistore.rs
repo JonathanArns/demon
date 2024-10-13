@@ -228,7 +228,6 @@ impl<O: Operation> Unistore<O> {
                                         check_now = true;
                                     }
                                 }
-                                // assert!(check_now, "we did premature GC on the transaction log, len: {:?}, start_id: {:?}", transaction_log.len(), start_id);
 
                                 // re-sequence with new id, if a PoR conflict was detected or the checks could not be done
                                 if !check_now || !may_commit {

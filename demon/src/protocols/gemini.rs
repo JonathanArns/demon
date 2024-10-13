@@ -33,6 +33,7 @@ pub struct Gemini<O: Operation> {
     /// (next_seq_to_apply, seq -> op)
     waiting_red_ops: Arc<Mutex<(usize, HashMap<usize, (TransactionId, O)>)>>,
     next_transaction_id: Arc<Mutex<TransactionId>>,
+    duration: Duration,
 }
 
 #[async_trait]
@@ -49,7 +50,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
                 tokio::task::spawn(Self::forward_token_after_duration(
                     self.next_red_sequence.clone(),
                     self.network.clone(),
-                    Duration::from_millis(50)
+                    self.duration,
                 ));
             }
         }
@@ -58,7 +59,7 @@ impl<O: Operation> MsgHandler<Message> for Gemini<O> {
 
 impl<O: Operation> Gemini<O> {
     /// Creates and starts a new DeMon node.
-    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>) -> Arc<Self> {
+    pub async fn new<A: ToSocketAddrs>(addrs: Option<A>, cluster_size: u32, api: Box<dyn API<O>>, name: Option<String>, arg: Option<usize>) -> Arc<Self> {
         let network = Network::connect(addrs, cluster_size, name).await.unwrap();
         let storage = Storage::new();
         let (causal_replication, causal_replication_events) = CausalReplication::new(network.clone()).await;
@@ -76,6 +77,7 @@ impl<O: Operation> Gemini<O> {
             waiting_red_clients: Default::default(),
             waiting_red_ops: Default::default(),
             next_transaction_id: Arc::new(Mutex::new(TransactionId(my_id, 0))),
+            duration: Duration::from_millis(arg.unwrap_or(25) as u64),
         });
         network.set_msg_handler(proto.clone()).await;
         tokio::task::spawn(proto.clone().event_loop(
@@ -105,23 +107,28 @@ impl<O: Operation> Gemini<O> {
     async fn sequence_red(&self, op: O, transaction_id: TransactionId) -> Option<(usize, ShadowOp<O>)> {
         let id;
         loop {
-            {
+            { // wait till we hold the red token
                 let mut latch = self.next_red_sequence.lock().await;
                 if let Some(ref mut seq) = *latch {
-                    let (applied, _) = *self.waiting_red_ops.lock().await;
-                    if applied == *seq {
-                        // now we are allowed to process red ops locally
-                        if let Some(shadow) = self.storage.generate_shadow(op).await {
-                            id = *seq;
-                            *seq += 1;
-                            return Some((id, ShadowOp::Red {
-                                seq: id,
-                                op: shadow,
-                                id: transaction_id,
-                            }))
-                        } else {
-                            return None
+                    loop {
+                        { // wait till we have processed all previous red ops
+                            let (applied, _) = *self.waiting_red_ops.lock().await;
+                            if applied == *seq {
+                                // now we are allowed to process red ops locally
+                                if let Some(shadow) = self.storage.generate_shadow(op).await {
+                                    id = *seq;
+                                    *seq += 1;
+                                    return Some((id, ShadowOp::Red {
+                                        seq: id,
+                                        op: shadow,
+                                        id: transaction_id,
+                                    }))
+                                } else {
+                                    return None
+                                }
+                            }
                         }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
             }
@@ -148,19 +155,18 @@ impl<O: Operation> Gemini<O> {
     /// Queues a sequenced red operation for execution
     async fn process_red_shadow_op(&self, rbop: ShadowOp<O>) {
         if let ShadowOp::Red {op, seq, id} = rbop {
-            let name = op.name();
             let mut clients = self.waiting_red_clients.lock().await;
             let mut latch = self.waiting_red_ops.lock().await;
             latch.1.insert(seq, (id, op));
             let mut next_seq = latch.0;
-            while let Some((id, op)) = latch.1.remove(&next_seq) {
-                let output = self.storage.exec(op).await;
+            while let Some((next_id, next_op)) = latch.1.remove(&next_seq) {
+                let output = self.storage.exec(next_op.clone()).await;
 
                 #[cfg(feature = "instrument")]
                 log_instrumentation(InstrumentationEvent{
                     kind: String::from("visible"),
                     val: None,
-                    meta: Some(id.to_string() + " " + &name),
+                    meta: Some(next_id.to_string() + " " + &next_op.name()),
                 });
 
                 if let Some(sender) = clients.remove(&next_seq) {

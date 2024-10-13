@@ -60,7 +60,7 @@ impl TextReplica {
             return true
         }
         if let Some(role) = self.user_roles.get(user) {
-            role.to_numeric() > op.min_role().to_numeric()
+            role.to_numeric() >= op.min_role().to_numeric()
         } else {
             false
         }
@@ -128,7 +128,7 @@ impl Operation for EditorOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::Insert{..} => false,
             Self::InsertShadow{..} => false,
@@ -218,16 +218,16 @@ impl Operation for EditorOp {
         }
     }
 
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow_mut(&self, state: &mut Self::State) -> Option<Self> {
         match *self {
             Self::Insert { at, ref text, ref user } => Some(Self::InsertShadow {
-                crdt: state.replica.inserted(at, text.len()),
+                crdt: state.replica.create_insertion(at, text.len()),
                 text: text.to_owned(),
                 user: user.to_owned()
             }),
             Self::InsertShadow{..} => None,
             Self::Delete { at, length, ref user } => Some(Self::DeleteShadow {
-                crdt: state.replica.deleted(at..(at+length)),
+                crdt: state.replica.create_deletion(at..(at+length)),
                 user: user.to_owned()
             }),
             Self::DeleteShadow{..} => None,

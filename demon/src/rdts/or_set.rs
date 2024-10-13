@@ -41,7 +41,7 @@ impl Operation for ORSetOp {
         false
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match self {
             Self::Compact => true,
             _ => false,
@@ -107,7 +107,7 @@ impl Operation for ORSetOp {
         todo!("return logical and physical size")
     }
 
-    fn generate_shadow(&self, _state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow(&self, _state: &Self::State) -> Option<Self> {
         match *self {
             Self::Insert(item) => Some(Self::InsertShadow(item, UniqueId::gen())),
             Self::Remove(item) => Some(Self::RemoveShadow(item, UniqueId::gen())),

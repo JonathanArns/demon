@@ -57,7 +57,8 @@ def run_benches_from_file(path, write_output=True, output_dir="./test_data/", si
             if filename in bench_state["finished_benches"]:
                 continue
             run_bench(bench_config, nodes, silent, always_load, write_output, filepath)
-            stop_servers(bench_config["cluster_config"], nodes)
+            if always_load:
+                stop_servers(bench_config["cluster_config"], nodes)
             time.sleep(bench_config["settings"]["duration"])
             bench_state["finished_benches"].append(filename)
             if write_output:
@@ -77,6 +78,8 @@ def expand_multi_bench_config(multi_config):
                 "datatype": datatype,
                 "node_ids": multi_config["cluster_config"]["node_ids"]
             }
+            if "proto_arg" in multi_config["cluster_config"]:
+                cluster_config["proto_arg"] = multi_config["cluster_config"]["proto_arg"]
             
             if "micro" == multi_config["type"]:
                 for settings in expand_micro_bench_settings(multi_config["settings"]):

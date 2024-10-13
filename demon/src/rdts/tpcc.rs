@@ -395,7 +395,7 @@ impl Operation for TpccOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::LoadTuples {..} => true,
             Self::Delivery {..} => false,
@@ -979,7 +979,7 @@ impl Operation for TpccOp {
         }
     }
 
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
         match *self {
             Self::LoadTuples {..} => Some(self.clone()),
             Self::Delivery {..} => Some(self.clone()),

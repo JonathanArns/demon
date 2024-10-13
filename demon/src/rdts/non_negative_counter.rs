@@ -8,6 +8,7 @@ use super::Operation;
 
 pub type Key = u64;
 pub type Value = i64;
+pub type State = HashMap<Key, Value>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NonNegativeCounterOp {
@@ -27,8 +28,8 @@ impl NonNegativeCounterOp {
 }
 
 impl Operation for NonNegativeCounterOp {
-    type State = HashMap<Key, Value>;
-    type ReadVal = Option<Value>;
+    type State = State;
+    type ReadVal = Value;
     type QueryState = ();
 
     fn name(&self) -> String {
@@ -47,7 +48,7 @@ impl Operation for NonNegativeCounterOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::Read{..} => false,
             Self::Add{..} => false,
@@ -59,7 +60,7 @@ impl Operation for NonNegativeCounterOp {
         self.key() == other.key()
     }
 
-    fn rollback_conflicting_state(&self, source: &Self::State, target: &mut Self::State) {
+    fn rollback_conflicting_state(&self, source: &State, target: &mut State) {
         let key = self.key();
         if let Some(val) = source.get(&key) {
             target.insert(key, *val);
@@ -108,7 +109,7 @@ impl Operation for NonNegativeCounterOp {
     }
 
     /// Subtract only generates a shadow op, if the counter value is large enough.
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow(&self, state: &State) -> Option<Self> {
         match *self {
             Self::Read { .. } => Some(self.clone()),
             Self::Add { .. } => Some(self.clone()),
@@ -127,10 +128,10 @@ impl Operation for NonNegativeCounterOp {
         }
     }
 
-    fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
+    fn apply(&self, state: &mut State) -> Option<Value> {
         match *self {
             Self::Read { key } => {
-                Some(state.get(&key).map(|v| v.to_owned()))
+                state.get(&key).map(|v| v.to_owned())
             },
             Self::Add { key, val } => {
                 if let Some(v) = state.get_mut(&key) {
@@ -142,7 +143,7 @@ impl Operation for NonNegativeCounterOp {
             },
             Self::Subtract { key, val } => {
                 if let Some(v) = state.get_mut(&key) {
-                    if *v <= val {
+                    if *v >= val {
                         *v -= val;
                     }
                 } else {

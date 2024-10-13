@@ -8,6 +8,7 @@ pub mod counters;
 pub mod rubis_rdt;
 pub mod tpcc;
 pub mod non_negative_counter;
+pub mod single_non_negative_counter;
 pub mod or_set;
 pub mod co_editor;
 
@@ -24,11 +25,16 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Indicates that the operation is writing and thus needs to be replicated in any case.
     fn is_writing(&self) -> bool;
     /// Indicates that this operation needs to be strong in semi-serializability.
-    fn is_semiserializable_strong(&self) -> bool;
+    fn is_strong(&self) -> bool;
     /// Used to turn client operations into shadow operations.
     /// Must not perform client-visible state mutations, but may perform "bookkeeping" for CRDT
     /// correctness.
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self>;
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
+        Some(self.clone())
+    }
+    fn generate_shadow_mut(&self, state: &mut Self::State) -> Option<Self> {
+        self.generate_shadow(state)
+    }
 
     // optional methods for DeMon, to tune the protocol and minimize rollbacks to conflicting operations
 
@@ -58,7 +64,7 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     fn update_query_state(_state: &mut Self::QueryState, _val: Self::ReadVal) {}
     /// Used to record operation names in measurements.
     fn name(&self) -> String {
-        unimplemented!("must implement to support benchmarks")
+        String::from("")
     }
     /// Parse a query string to an operation, or return None for bad queries.
     fn parse(_text: &str) -> anyhow::Result<Self> {

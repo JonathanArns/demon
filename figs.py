@@ -3,7 +3,6 @@ import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
-import dask.dataframe as dd
 import pandas as pd
 import numpy as np
 import scipy.stats as st
@@ -117,7 +116,7 @@ def aggregate(dir_path, recompute=True):
     return df
 
 
-def plot_latency_bars2(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
+def plot_latency_bars(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
     df = df[df["datatype"] == datatype]
     df = df[df["duration"] == duration]
     df = df[df["cluster_size"] == cluster_size]
@@ -168,43 +167,6 @@ def plot_latency_bars2(df, dir_path, datatype="", duration=60, cluster_size=5, n
     plt.tight_layout()
     plt.savefig(os.path.join(dir_path, f"{datatype}-latency-bars.pdf"))
 
-
-def plot_latency_bars(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
-    df = df[df["datatype"] == datatype]
-    df = df[df["duration"] == duration]
-    df = df[df["cluster_size"] == cluster_size]
-    df = df[df["num_clients"] == num_clients]
-    df = df[df["strong_ratio"] == strong_ratio]
-    protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
-    index = np.arange(len(ops))
-    bar_width = 1
-    for kind in ["remote", "client"]:
-        plt.figure(figsize=(3 * len(ops), 5))
-        plt.yscale('log', base=10)
-        if limit:
-            plt.ylim(None, limit)
-        i = 0
-        j = 0
-        for proto in protocols:
-            proto_df = df[df["proto"] == proto]
-            plt.bar(
-                x=index * (len(protocols) + 1) * bar_width + i * bar_width,
-                height=[proto_df[f"{op}_{kind}_median_latency"].iloc[0] for op in ops],
-                yerr=([0 for x in range(len(ops))], [proto_df[f"{op}_{kind}_p99_latency"].iloc[0] for op in ops]),
-                width=bar_width,
-                label=LABELS[proto],
-                capsize=5.0,
-                color=COLORS[proto],
-                edgecolor="black",
-                hatch=BAR_PATTERNS[proto],
-            )
-            i += 1
-        plt.xticks([(x+0.5) * bar_width * (len(protocols) + 1) - 1 for x in range(len(ops))], ops)
-        plt.ylabel("Latency (ms)")
-        plt.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
-        plt.legend(bbox_to_anchor=(0.5, 1.15), loc="upper center", ncol=6, fontsize="12")
-        plt.savefig(os.path.join(dir_path, f"{datatype}-{kind}-latency-bars.pdf"))
-
 def plot_scaling(df, dir_path, datatype="", duration=60, num_clients=2000, limit=None):
     df = df[df["proto"] == "demon"]
     df = df[df["datatype"] == datatype]
@@ -253,7 +215,7 @@ def plot_scaling(df, dir_path, datatype="", duration=60, num_clients=2000, limit
     plt.savefig(os.path.join(dir_path, f"throughput-scaling.png"), dpi=300)
 
 
-def plot_rubis_lines2(df, dir_path):
+def plot_rubis_lines(df, dir_path):
     df = df[df["datatype"] == "rubis"]
     df = df[df["duration"] == 60]
     df = df[df["cluster_size"] == 5]
@@ -297,40 +259,11 @@ def plot_rubis_lines2(df, dir_path):
     plt.savefig(os.path.join(dir_path, f"rubis_latency.pdf"))
 
 
-def plot_rubis_lines(df, dir_path):
+def plot_rubis_throughput_latency(df, dir_path):
     df = df[df["datatype"] == "rubis"]
     df = df[df["duration"] == 60]
     df = df[df["cluster_size"] == 5]
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
-
-    for kind in ["client", "remote"]:
-        plt.figure(figsize=(12, 6))  # Adjust size as needed
-        if kind == "client":
-            plt.ylim(10**-3, 10 ** 4)
-            n_col = 5
-        else:
-            plt.ylim(10**2, 10 ** 4)
-            n_col = 6
-        plt.yscale('log', base=10)
-        # plt.xscale('log', base=10)
-        for proto in protocols:
-            if proto == "causal" and kind == "client":
-                continue
-            if proto == "demon":
-                line_width = 2
-            else:
-                line_width = 1.5
-            proto_df = df[df["proto"] == proto]
-            plt.plot(proto_df["num_clients"], proto_df[f"{kind}_median_latency"], PLOT_STYLES[proto],
-                     label=LABELS[proto] + " p50", color=COLORS[proto], linewidth=line_width)
-            plt.plot(proto_df["num_clients"], proto_df[f"{kind}_p99_latency"], P99_PLOT_STYLES[proto],
-                     label=LABELS[proto] + " p99", color=COLORS[proto], linewidth=line_width)
-        plt.xlabel("Clients per region")
-        plt.ylabel(f"{kind} latency (ms)".capitalize())
-        plt.legend(bbox_to_anchor=(0.5, 1.15), loc="upper center", ncol=n_col, fontsize="10")
-        plt.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
-        plt.tight_layout()
-        plt.savefig(os.path.join(dir_path, f"rubis_{kind}_latency.pdf"))
 
     plt.figure(figsize=(12, 5))  # Adjust size as needed
     for proto in protocols:
@@ -362,7 +295,6 @@ def plot_rubis_unstable_ops(df, dir_path):
     plt.plot(df["num_clients"], df["mean_unstable_ops_count"], PLOT_STYLES["demon"],
              color=COLORS["demon"], linewidth=2)
     plt.xlabel("Throughput (txns/s)")
-    # plt.ylabel("Mean Unstable Operations Count")
     plt.ylabel("#Unstable Operations")
     plt.grid(linestyle="--", linewidth=0.5)
     plt.tight_layout()
@@ -389,44 +321,6 @@ def plot_strong_ratio(df, dir_path):
         plt.grid(linestyle="--", linewidth=0.5)
         plt.savefig(os.path.join(dir_path, f"strong_ratio_{kind}_latency.pdf"))
 
-def plot_rubis_violin(df, dir_path, duration=60, cluster_size=5, num_clients=None, limit=None):
-    pass
-
-def plot_conflict_histogram(dir_path):
-    df = pd.read_csv(os.path.join(dir_path, "rubis_strict_5nodes_60s_4000clients_1strong_1keys.csv"))
-    df["op"] = df["meta"].str.split(" ").str.get(1)
-    init = df[df["kind"] == "initiated"]
-    # client = init.merge(df[df["kind"] == "visible"][["meta", "node", "unix_micros"]], on=["meta", "node"], suffixes=("", "_client_visible"))
-    # client["client_latency"] = (client["unix_micros_client_visible"] - client["unix_micros"]) / 1000
-
-    last_visible = df[df["kind"] == "visible"].sort_values(by=["unix_micros"]).drop_duplicates(subset=["meta"], keep="last")
-    remote = init.merge(last_visible[["meta", "unix_micros"]], on=["meta"], suffixes=("", "_end"))
-    remote["remote_latency"] = (remote["unix_micros_end"] - remote["unix_micros"]) / 1000
-    remote.index = pd.IntervalIndex.from_arrays(remote["unix_micros"], remote["unix_micros_end"])
-    remote["conflicts"] = 0
-    bids = remote.loc[remote["op"] == "Bid"]
-    closeAuctions = remote.loc[remote["op"] == "CloseAuction"]
-
-    i = 0
-    for interval in closeAuctions.index.values:
-        overlaps = bids.index.overlaps(interval).astype(int)
-        closeAuctions["conflicts"].iloc[i] = overlaps.sum()
-        bids["conflicts"] += overlaps
-        i += 1
-
-    plt.figure(figsize=(4, 4))  # Adjust size as needed
-    plt.hist(bids["conflicts"])
-    plt.xlabel("number of conflicts")
-    plt.ylabel("bids")
-    plt.savefig(os.path.join(dir_path, f"conflict_histogram_bids.png"), dpi=300)
-
-    plt.figure(figsize=(4, 4))  # Adjust size as needed
-    plt.hist(closeAuctions["conflicts"])
-    plt.xlabel("number of conflicts")
-    plt.ylabel("closeAuctions")
-    plt.savefig(os.path.join(dir_path, f"conflict_histogram_closeauction.png"), dpi=300)
-
-
 def plot_rubis_cumulative_latency_dist(dir_path):
     for kind in ["client", "remote"]:
         plt.figure(figsize=(4, 4))  # Adjust size as needed
@@ -446,7 +340,6 @@ def plot_rubis_cumulative_latency_dist(dir_path):
         plt.ylabel("probability")
         plt.savefig(os.path.join(dir_path, f"{kind}_latency_distribution.png"), dpi=300)
 
-
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("argument required to specify input directory")
@@ -460,24 +353,23 @@ if __name__ == "__main__":
     path = args[0]
     figure = args[1]
 
-    df = aggregate(path, recompute)
-    if figure == "histogram":
-        plot_conflict_histogram(path)
-    elif figure == "latency-dist":
+    if figure == "latency-dist":
         plot_rubis_cumulative_latency_dist(path)
-    elif figure == "rubis-lines":
-        plot_rubis_lines2(df, path)
-    elif figure == "rubis-unstable":
-        plot_rubis_unstable_ops(df, path)
-    elif figure == "rubis-latency-bars":
-        plot_latency_bars2(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
-    elif figure == "strong-ratio":
-        plot_strong_ratio(df, path)
-    elif figure == "scaling":
-        plot_scaling(df, path, datatype="rubis", duration=60, num_clients=2000)
-    elif figure == "non-neg-latency-bars":
-        plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
-    elif figure == "co-editor-latency-bars":
-        plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "ChangeRole"], limit=2000)
     else:
-        print("not a known figure name")
+        df = aggregate(path, recompute)
+        if figure == "rubis-lines":
+            plot_rubis_lines(df, path)
+        elif figure == "rubis-unstable":
+            plot_rubis_unstable_ops(df, path)
+        elif figure == "rubis-latency-bars":
+            plot_latency_bars(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, limit=2000, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
+        elif figure == "strong-ratio":
+            plot_strong_ratio(df, path)
+        elif figure == "scaling":
+            plot_scaling(df, path, datatype="rubis", duration=60, num_clients=2000)
+        elif figure == "non-neg-latency-bars":
+            plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
+        elif figure == "co-editor-latency-bars":
+            plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "Delete", "ChangeRole"])
+        else:
+            print("not a known figure name")

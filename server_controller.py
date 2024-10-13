@@ -20,6 +20,7 @@ def start_server():
         datatype = config["datatype"]
         addr = config.get("addr", None)
         name = config.get("name", None)
+        proto_arg = config.get("proto_arg", None)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -29,6 +30,8 @@ def start_server():
             command += ["--addr", addr]
         if not name is None:
             command += ["--replica-name", name]
+        if not proto_arg is None:
+            command += ["--proto-arg", proto_arg]
         process = subprocess.Popen(command)
         return jsonify({"message": "server started", "pid": process.pid}), 200
     except Exception as e:

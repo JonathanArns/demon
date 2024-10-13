@@ -105,7 +105,7 @@ impl Operation for RubisOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::RegisterUser{..} => true,
 
@@ -188,7 +188,7 @@ impl Operation for RubisOp {
         unimplemented!("please use the bench endpoint")
     }
 
-    fn generate_shadow(&self, _state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow(&self, _state: &Self::State) -> Option<Self> {
         match *self {
             Self::RegisterUser{..} => Some(self.clone()),
 
@@ -205,15 +205,15 @@ impl Operation for RubisOp {
 
     fn name(&self) -> String {
         match *self {
-            Self::RegisterUser {..} => "RegisterUser",
-            Self::GetAuction => "GetAuction",
-            Self::OpenAuction {..} => "OpenAuction",
-            Self::CloseAuction {..} => "CloseAuction",
-            Self::Bid {..} => "Bid",
-            Self::GetItem => "GetItem",
-            Self::Sell {..} => "Sell",
-            Self::BuyNow {..} => "BuyNow",
-        }.to_string()
+            Self::RegisterUser { .. } => "RegisterUser".to_string(),
+            Self::GetAuction => "GetAuction".to_string(),
+            Self::OpenAuction {..} => "OpenAuction".to_string(),
+            Self::CloseAuction { auction_id } => format!("CloseAuction {}", auction_id),
+            Self::Bid { auction_id, .. } => format!("Bid {}", auction_id),
+            Self::GetItem => "GetItem".to_string(),
+            Self::Sell {..} => "Sell".to_string(),
+            Self::BuyNow {..} => "BuyNow".to_string(),
+        }
     }
 
     fn apply(&self, state: &mut Self::State) -> Option<Self::ReadVal> {
@@ -290,41 +290,39 @@ impl Operation for RubisOp {
                     return Some(ReturnVal::Err("no auctions yet".to_string()))
                 }
                 let idx = thread_rng().gen_range(0..state.auctions.len());
-                state.auctions.get_index(idx).map(|(k, v)| ReturnVal::Auction(v.clone()))
+                state.auctions.get_index(idx).map(|(_k, v)| ReturnVal::Auction(v.clone()))
             }
             Self::GetItem => {
                 if state.items.is_empty() {
                     return Some(ReturnVal::Err("no auctions yet".to_string()))
                 }
                 let idx = thread_rng().gen_range(0..state.items.len());
-                state.items.get_index(idx).map(|(k, v)| ReturnVal::Item(k.clone()))
+                state.items.get_index(idx).map(|(k, _v)| ReturnVal::Item(k.clone()))
             }
         }
     }
 
     fn gen_query(_settings: &crate::api::http::BenchSettings, state: &mut Self::QueryState) -> Self {
         let mut rng = thread_rng();
-        let x = rng.gen_range(0..100);
-        if x < 2 {
+        let x = rng.gen_range(0..130);
+        if x < 4 {
             Self::CloseAuction { auction_id: state.auction.id }
-        } else if x < 2 + 3 {
+        } else if x < 4 + 8 {
             Self::OpenAuction { auction_id: state.auction.id }
-        } else if x < 2 + 3 + 45 {
+        } else if x < 4 + 8 + 60 {
             Self::Bid { auction_id: state.auction.id, amount: rng.gen(), user: state.user.clone() }
-        } else if x < 2 + 3 + 45 + 10 {
+        } else if x < 4 + 8 + 60 + 13 {
             Self::BuyNow { item: state.item.clone(), amount: rng.gen_range(1..10) }
-        } else if x < 2 + 3 + 45 + 10 + 5 {
+        } else if x < 4 + 8 + 60 + 13 + 8 {
             Self::Sell { item: (&mut rng).sample_iter(&Alphanumeric).take(8).map(char::from).collect::<String>(), stock: rng.gen_range(100..100000) }
-        } else if x < 2 + 3 + 45 + 10 + 5 + 5 {
+        } else if x < 4 + 8 + 60 + 13 + 8 + 7 {
             let username = rng.sample_iter(&Alphanumeric).take(8).map(char::from).collect::<String>();
             state.user = username.clone();
             Self::RegisterUser { username }
-        } else if x < 2 + 3 + 45 + 10 + 5 + 5 + 20 {
+        } else if x < 4 + 8 + 60 + 13 + 8 + 7 + 20 {
             Self::GetAuction
-        } else if x < 2 + 3 + 45 + 10 + 5 + 5 + 20 + 10 {
-            Self::GetItem
         } else {
-            unreachable!()
+            Self::GetItem
         }
     }
 

@@ -51,7 +51,7 @@ impl Operation for CounterOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::Read{..} => false,
             Self::Add{..} => false,
@@ -122,7 +122,7 @@ impl Operation for CounterOp {
     }
 
     /// All of the counter operations are their own shadow operations.
-    fn generate_shadow(&self, state: &mut Self::State) -> Option<Self> {
+    fn generate_shadow(&self, state: &Self::State) -> Option<Self> {
         Some(self.clone())
     }
 
