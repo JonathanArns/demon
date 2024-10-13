@@ -105,7 +105,7 @@ impl Operation for RubisOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::RegisterUser{..} => true,
 

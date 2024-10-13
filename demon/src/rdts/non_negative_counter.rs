@@ -48,7 +48,7 @@ impl Operation for NonNegativeCounterOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::Read{..} => false,
             Self::Add{..} => false,

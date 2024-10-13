@@ -142,6 +142,7 @@ def plot_latency_bars(df, dir_path, datatype="", duration=60, cluster_size=5, nu
             )
             i += 1
         plt.xticks([(x+0.5) * bar_width * (len(protocols) + 1) - 1 for x in range(len(ops))], ops)
+        plt.yscale("log")
         plt.ylabel(f"mean {kind} latency (ms)")
         plt.legend(fontsize="large")
         plt.savefig(os.path.join(dir_path, f"{datatype}-{kind}-latency-bars.png"), dpi=300)
@@ -242,6 +243,8 @@ def plot_strong_ratio(df, dir_path):
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
     for kind in ["client", "remote"]:
         plt.figure(figsize=(7, 4))  # Adjust size as needed
+        # plt.axvline(x=0.24, color="b")
+        # plt.axvline(x=0.84, color="r")
         for proto in protocols:
             proto_df = df[df["proto"] == proto]
             plt.plot(proto_df["strong_ratio"], proto_df[f"{kind}_mean_latency"], PLOT_STYLES[proto], label=LABELS[proto], color=COLORS[proto])
@@ -249,46 +252,6 @@ def plot_strong_ratio(df, dir_path):
         plt.ylabel(f"mean {kind} latency (ms)")
         plt.legend()
         plt.savefig(os.path.join(dir_path, f"strong_ratio_{kind}_latency.png"), dpi=300)
-
-def plot_rubis_violin(df, dir_path, duration=60, cluster_size=5, num_clients=None, limit=None):
-    pass
-
-def plot_conflict_histogram(dir_path):
-    pd.options.mode.chained_assignment = None
-    df = pd.read_csv(os.path.join(dir_path, "rubis_strict_5nodes_60s_3000clients_1strong_3keys.csv"))
-    df["op"] = df["meta"].str.split(" ").str.get(1)
-    init = df[df["kind"] == "initiated"]
-    last_visible = df[df["kind"] == "visible"].sort_values(by=["unix_micros"]).drop_duplicates(subset=["meta"], keep="last")
-    remote = init.merge(last_visible[["meta", "unix_micros"]], on=["meta"], suffixes=("", "_end"))
-    remote["remote_latency"] = (remote["unix_micros_end"] - remote["unix_micros"]) / 1000
-    remote.index = pd.IntervalIndex.from_arrays(remote["unix_micros"], remote["unix_micros_end"])
-    remote["conflicts"] = 0
-    bids = remote.loc[remote["op"] == "Bid"].copy(deep=True)
-    bids["auction_id"] = bids["meta"].str.split(" ").str.get(2)
-    closeAuctions = remote.loc[remote["op"] == "CloseAuction"].copy(deep=True)
-    closeAuctions["auction_id"] = closeAuctions["meta"].str.split(" ").str.get(2)
-
-    i = 0
-    for interval in closeAuctions.index.values:
-        auction_id = closeAuctions.loc[interval]["auction_id"]
-        overlaps = bids.index.overlaps(interval)
-        conflicts = overlaps & (bids["auction_id"] == auction_id)
-        closeAuctions.loc[i, "conflicts"] = conflicts.astype(int).sum()
-        bids["conflicts"] += conflicts.astype(int)
-        i += 1
-
-    plt.figure(figsize=(4, 4))  # Adjust size as needed
-    plt.hist(bids["conflicts"])
-    plt.xlabel("number of conflicts")
-    plt.ylabel("bids")
-    plt.savefig(os.path.join(dir_path, f"conflict_histogram_bids.png"), dpi=300)
-
-    plt.figure(figsize=(4, 4))  # Adjust size as needed
-    plt.hist(closeAuctions["conflicts"])
-    plt.xlabel("number of conflicts")
-    plt.ylabel("closeAuctions")
-    plt.savefig(os.path.join(dir_path, f"conflict_histogram_closeauction.png"), dpi=300)
-
 
 def plot_rubis_cumulative_latency_dist(dir_path):
     for kind in ["client", "remote"]:
@@ -309,6 +272,8 @@ def plot_rubis_cumulative_latency_dist(dir_path):
         plt.ylabel("probability")
         plt.savefig(os.path.join(dir_path, f"{kind}_latency_distribution.png"), dpi=300)
 
+def plot_heatmap(df, dir_path):
+    pass
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -323,10 +288,12 @@ if __name__ == "__main__":
     path = args[0]
     figure = args[1]
 
-    if figure == "histogram":
-        plot_conflict_histogram(path)
-    elif figure == "latency-dist":
+    if figure == "latency-dist":
         plot_rubis_cumulative_latency_dist(path)
+    elif figure == "latency-violins":
+        plot_rubis_violin_latency_dist(path)
+    elif figure == "latency-histogram":
+        plot_rubis_latency_histogram(path)
     else:
         df = aggregate(path, recompute)
         if figure == "rubis-lines":
@@ -342,6 +309,6 @@ if __name__ == "__main__":
         elif figure == "non-neg-latency-bars":
             plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
         elif figure == "co-editor-latency-bars":
-            plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "ChangeRole"], limit=2000)
+            plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "Delete", "ChangeRole"])
         else:
             print("not a known figure name")

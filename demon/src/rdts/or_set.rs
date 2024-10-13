@@ -41,7 +41,7 @@ impl Operation for ORSetOp {
         false
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match self {
             Self::Compact => true,
             _ => false,

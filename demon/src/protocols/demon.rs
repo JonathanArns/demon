@@ -89,7 +89,7 @@ impl<O: Operation> DeMon<O> {
         tokio::spawn(async move {
             loop {
                 let (query, result_sender) = api_events.recv().await.unwrap();
-                if query.is_semiserializable_strong() {
+                if query.is_strong() {
                     // strong operation
                     let protocol = demon.clone();
                     tokio::task::spawn(async move {

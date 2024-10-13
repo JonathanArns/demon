@@ -128,7 +128,7 @@ impl Operation for EditorOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::Insert{..} => false,
             Self::InsertShadow{..} => false,

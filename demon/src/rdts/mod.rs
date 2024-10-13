@@ -8,6 +8,7 @@ pub mod counters;
 pub mod rubis_rdt;
 pub mod tpcc;
 pub mod non_negative_counter;
+pub mod single_non_negative_counter;
 pub mod or_set;
 pub mod co_editor;
 
@@ -24,7 +25,7 @@ pub trait Operation: Clone + Debug + Sync + Send + Serialize + DeserializeOwned 
     /// Indicates that the operation is writing and thus needs to be replicated in any case.
     fn is_writing(&self) -> bool;
     /// Indicates that this operation needs to be strong in semi-serializability.
-    fn is_semiserializable_strong(&self) -> bool;
+    fn is_strong(&self) -> bool;
     /// Used to turn client operations into shadow operations.
     /// Must not perform client-visible state mutations, but may perform "bookkeeping" for CRDT
     /// correctness.

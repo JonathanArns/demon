@@ -395,7 +395,7 @@ impl Operation for TpccOp {
         }
     }
 
-    fn is_semiserializable_strong(&self) -> bool {
+    fn is_strong(&self) -> bool {
         match *self {
             Self::LoadTuples {..} => true,
             Self::Delivery {..} => false,
