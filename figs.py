@@ -27,6 +27,14 @@ P99_PLOT_STYLES = {
     "causal": "<:",
     "strict": "x:",
 }
+LINE_STYLE = {
+    "demon": "solid",
+    "gemini": (0, (5, 1, 1, 1, 1, 1)),
+    "redblue": "dashed",
+    "unistore": "dashdot",
+    "causal": (0, (1, 3)),
+    "strict": "dotted",
+}
 
 BAR_PATTERNS = {
     "demon": "+",
@@ -48,14 +56,14 @@ COLORS = {
 
 LABELS = {
     "demon": "DeMon",
-    "gemini": "RedBlue (gemini)",
+    "gemini": "RedBlue (gemini non-ft)",
     "redblue": "RedBlue (ft)",
-    "unistore": "UniStore",
+    "unistore": "Optimistic PoR",
     "causal": "No guarantees",
     "strict": "Strict",
 }
 
-PROTOS = ["demon", "gemini", "redblue", "unistore", "strict", "causal"]
+PROTOS = ["demon", "redblue", "gemini", "unistore", "strict", "causal"]
 
 
 def aggregate(dir_path, recompute=True):
@@ -116,7 +124,57 @@ def aggregate(dir_path, recompute=True):
     return df
 
 
-def plot_latency_bars(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
+def plot_latency_bars1(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
+    df = df[df["datatype"] == datatype]
+    df = df[df["duration"] == duration]
+    df = df[df["cluster_size"] == cluster_size]
+    df = df[df["num_clients"] == num_clients]
+    df = df[df["strong_ratio"] == strong_ratio]
+    protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
+    index = np.arange(len(ops))
+    bar_width = 1
+
+    # Create figure and 2 subplots
+    if len(ops) == 2:
+        fig, axs = plt.subplots(1, 2, figsize=(10, 5), constrained_layout=True)
+    else:
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    kinds = ["client", "remote"]
+
+    
+    for i, kind in enumerate(kinds):
+        ax = axs[i]
+        ax.set_yscale('log', base=10)
+        proto_index = 0  # Reset index for protocols
+        artists = []
+        labels = []
+        for proto in protocols:
+            proto_df = df[df["proto"] == proto]
+            artists.append(ax.bar(
+                x=index * (len(protocols) + 1) * bar_width + proto_index * bar_width,
+                height=[proto_df[f"{op}_{kind}_median_latency"].iloc[0] for op in ops],
+                yerr=([0 for _ in range(len(ops))], [proto_df[f"{op}_{kind}_p99_latency"].iloc[0] for op in ops]),
+                width=bar_width,
+                label=LABELS[proto],
+                capsize=5.0,
+                color=COLORS[proto],
+                edgecolor="black",
+                hatch=BAR_PATTERNS[proto],
+            ))
+            labels.append(LABELS[proto])
+            proto_index += 1
+        if kind == "remote":
+            ax.set_ylim(10**2, None)
+        ax.set_xticks([(x+0.5) * bar_width * (len(protocols) + 1) - 1 for x in range(len(ops))])
+        ax.set_xticklabels(ops)
+        ax.set_ylabel("Latency (ms)")
+        ax.set_title(f"{kind}".capitalize())
+        ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
+
+    plt.figlegend(artists, labels, loc="outside upper center", ncol=3, fontsize=14)
+    plt.savefig(os.path.join(dir_path, f"{datatype}-latency-bars.pdf"))
+
+def plot_latency_bars2(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
     df = df[df["datatype"] == datatype]
     df = df[df["duration"] == duration]
     df = df[df["cluster_size"] == cluster_size]
@@ -172,53 +230,56 @@ def plot_scaling(df, dir_path, datatype="", duration=60, num_clients=2000, limit
     df = df[df["datatype"] == datatype]
     df = df[df["duration"] == duration]
     df = df[df["num_clients"] == num_clients]
-    # df = df[(df["num_clients"] == 3333) | (df["num_clients"] == 1429) | ((df["num_clients"] == 2000) & (df["cluster_size"] == 5))]
     cluster_sizes = [3, 5, 7]
     index = np.arange(len(cluster_sizes))
     bar_width = 1
-    for kind in ["remote", "client"]:
-        plt.figure(figsize=(2 * len(cluster_sizes), 6))
-        if limit:
-            plt.ylim(None, limit)
-        plt.bar(
+    fig, axs = plt.subplots(1, 3, figsize=(12, 4), constrained_layout=True)
+    for i, kind in enumerate(["client", "remote"]):
+        ax = axs[i+1]
+        ax.bar(
             x=index * bar_width,
-            height=[df[df["cluster_size"] == size][f"{kind}_mean_latency"].iloc[0] for size in cluster_sizes],
+            height=[df[df["cluster_size"] == size][f"{kind}_median_latency"].iloc[0] for size in cluster_sizes],
             yerr=([0 for x in range(len(cluster_sizes))], [df[df["cluster_size"] == size][f"{kind}_p99_latency"].iloc[0] for size in cluster_sizes]),
             width=bar_width,
-            label=LABELS["demon"],
+            # label=LABELS["demon"],
             capsize=5.0,
             color=COLORS["demon"],
             edgecolor="black",
-            hatch=BAR_PATTERNS["demon"],
+            # hatch=BAR_PATTERNS["demon"],
         )
-        plt.xticks([x for x in range(len(cluster_sizes))], cluster_sizes)
-        plt.xlabel("number of regions")
-        plt.ylabel(f"mean {kind} latency (ms)")
-        plt.savefig(os.path.join(dir_path, f"{kind}-latency-scaling.png"), dpi=300)
+        if kind == "client":
+            ax.set_yscale("log", base=10)
+        ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
+        ax.set_xticks([x for x in range(len(cluster_sizes))], cluster_sizes)
+        ax.set_xlabel("#regions")
+        ax.set_ylabel(f"Latency (ms)")
+        ax.set_title(f"{kind.capitalize()} latency")
 
-    plt.figure(figsize=(2 * len(cluster_sizes), 6))
-    if limit:
-        plt.ylim(None, limit)
-    plt.bar(
+    ax = axs[0]
+    ax.bar(
         x=index * bar_width,
         height=[df[df["cluster_size"] == size][f"throughput"].iloc[0] for size in cluster_sizes],
         width=bar_width,
-        label=LABELS["demon"],
+        # label=LABELS["demon"],
         capsize=5.0,
         color=COLORS["demon"],
         edgecolor="black",
-        hatch=BAR_PATTERNS["demon"],
+        # hatch=BAR_PATTERNS["demon"],
     )
-    plt.xticks([x for x in range(len(cluster_sizes))], cluster_sizes)
-    plt.xlabel("number of regions")
-    plt.ylabel(f"throughput (txn/s)")
-    plt.savefig(os.path.join(dir_path, f"throughput-scaling.png"), dpi=300)
+    ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
+    ax.set_xticks([x for x in range(len(cluster_sizes))], cluster_sizes)
+    ax.set_xlabel("#regions")
+    ax.set_ylabel(f"Throughput (txn/s)")
+    ax.set_title(f"Throughput")
+
+    plt.savefig(os.path.join(dir_path, f"scaling.pdf"))
 
 
 def plot_rubis_lines(df, dir_path):
     df = df[df["datatype"] == "rubis"]
     df = df[df["duration"] == 60]
     df = df[df["cluster_size"] == 5]
+    df = df[df["key_range"] < 3]
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
 
     # Create a figure with 2 subplots, one below the other
@@ -259,10 +320,11 @@ def plot_rubis_lines(df, dir_path):
     plt.savefig(os.path.join(dir_path, f"rubis_latency.pdf"))
 
 
-def plot_rubis_throughput_latency(df, dir_path):
+def plot_rubis_throughput(df, dir_path):
     df = df[df["datatype"] == "rubis"]
     df = df[df["duration"] == 60]
     df = df[df["cluster_size"] == 5]
+    df = df[df["key_range"] < 3]
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
 
     plt.figure(figsize=(12, 5))  # Adjust size as needed
@@ -276,8 +338,8 @@ def plot_rubis_throughput_latency(df, dir_path):
                  label=LABELS[proto], color=COLORS[proto])
     plt.xlabel("Clients per region")
     plt.ylabel("Throughput (K txns/s)")
-    plt.yticks(ticks=[0, 2000, 4000, 6000, 8000, 10_000, 12_000, 14_000],
-               labels=["0", "2", "4", "6", "8", "10", "12", "14"])
+    plt.yticks(ticks=[0, 2000, 4000, 6000, 8000, 10_000, 12_000, 14_000, 16_000],
+               labels=["0", "2", "4", "6", "8", "10", "12", "14", "16"])
     plt.grid(linestyle="--", linewidth=0.5)
     plt.legend(bbox_to_anchor=(0.5, 1.1), loc="upper center", ncol=6, fontsize="10")
     plt.tight_layout()
@@ -307,23 +369,23 @@ def plot_strong_ratio(df, dir_path):
     df = df[df["num_clients"] == 100]
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
     for kind in ["client", "remote"]:
-        plt.figure(figsize=(12, 5))  # Adjust size as needed
-        # plt.yscale('log', base=10)
+        plt.figure(figsize=(12, 5), constrained_layout=True)
         for proto in protocols:
             proto_df = df[df["proto"] == proto]
             plt.plot(proto_df["strong_ratio"], proto_df[f"{kind}_mean_latency"], PLOT_STYLES[proto],
                      label=LABELS[proto], color=COLORS[proto])
-            # plt.plot(proto_df["strong_ratio"], proto_df[f"{kind}_p99_latency"], P99_PLOT_STYLES[proto],
-            #          label=LABELS[proto] + " p99", color=COLORS[proto])
-        plt.xlabel("ratio of strong operations")
-        plt.ylabel(f"{kind} latency (ms)")
+        plt.xlabel("Ratio of strong operations")
+        plt.ylabel(f"Mean {kind} latency (ms)")
         plt.legend()
         plt.grid(linestyle="--", linewidth=0.5)
         plt.savefig(os.path.join(dir_path, f"strong_ratio_{kind}_latency.pdf"))
 
 def plot_rubis_cumulative_latency_dist(dir_path):
-    for kind in ["client", "remote"]:
-        plt.figure(figsize=(4, 4))  # Adjust size as needed
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    for i, kind in enumerate(["client", "remote"]):
+        ax = axs[i]
+        artists = []
+        labels = []
         for proto in ["demon", "causal", "redblue", "gemini", "unistore", "strict"]:
             df = pd.read_csv(os.path.join(dir_path, f"rubis_{proto}_5nodes_60s_100clients_1strong_1keys.csv"))
             init = df[df["kind"] == "initiated"]
@@ -334,11 +396,15 @@ def plot_rubis_cumulative_latency_dist(dir_path):
                 merged = init.merge(last_visible[["meta", "unix_micros"]], on=["meta"], suffixes=("", "_end"))
             merged["latency"] = (merged["unix_micros_end"] - merged["unix_micros"]) / 1000
 
-            plt.ecdf(merged["latency"], label=LABELS[proto], color=COLORS[proto])
-        plt.xscale("log")
-        plt.xlabel("latency (ms)")
-        plt.ylabel("probability")
-        plt.savefig(os.path.join(dir_path, f"{kind}_latency_distribution.png"), dpi=300)
+            artists.append(ax.ecdf(merged["latency"], label=LABELS[proto], color=COLORS[proto], linestyle=LINE_STYLE[proto], linewidth=2.0))
+            labels.append(LABELS[proto])
+        ax.grid(linestyle="--", linewidth=0.5, which="major")
+        ax.set_xscale("log", base=10)
+        ax.set_xlabel("Latency (ms)")
+        ax.set_ylabel("Probability")
+        ax.set_title(kind.capitalize())
+    plt.figlegend(artists, labels, loc="outside upper center", ncol=3, fontsize=14)
+    plt.savefig(os.path.join(dir_path, f"latency_distribution.pdf"))
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -359,17 +425,19 @@ if __name__ == "__main__":
         df = aggregate(path, recompute)
         if figure == "rubis-lines":
             plot_rubis_lines(df, path)
+        elif figure == "rubis-throughput":
+            plot_rubis_throughput(df, path)
         elif figure == "rubis-unstable":
             plot_rubis_unstable_ops(df, path)
         elif figure == "rubis-latency-bars":
-            plot_latency_bars(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, limit=2000, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
+            plot_latency_bars2(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, limit=2000, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
         elif figure == "strong-ratio":
             plot_strong_ratio(df, path)
         elif figure == "scaling":
             plot_scaling(df, path, datatype="rubis", duration=60, num_clients=2000)
         elif figure == "non-neg-latency-bars":
-            plot_latency_bars(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
+            plot_latency_bars1(df, path, datatype="non-neg-counter", num_clients=100, strong_ratio=0.5, duration=10, ops=["Add", "Subtract"])
         elif figure == "co-editor-latency-bars":
-            plot_latency_bars(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "Delete", "ChangeRole"])
+            plot_latency_bars1(df, path, datatype="co-editor", num_clients=1000, strong_ratio=0.001, ops=["Insert", "Delete", "ChangeRole"])
         else:
             print("not a known figure name")
