@@ -8,7 +8,7 @@ import numpy as np
 import scipy.stats as st
 import json
 
-matplotlib.rcParams.update({'font.size': 14})
+matplotlib.rcParams.update({'font.size': 20})
 plt.rcParams['axes.axisbelow'] = True
 
 PLOT_STYLES = {
@@ -56,11 +56,11 @@ COLORS = {
 
 LABELS = {
     "demon": "DeMon",
-    "gemini": "RedBlue (gemini non-ft)",
+    "gemini": "RedBlue (Gemini)",
     "redblue": "RedBlue (ft)",
     "unistore": "Optimistic PoR",
     "causal": "No guarantees",
-    "strict": "Strict",
+    "strict": "Consensus",
 }
 
 PROTOS = ["demon", "redblue", "gemini", "unistore", "strict", "causal"]
@@ -167,12 +167,14 @@ def plot_latency_bars1(df, dir_path, datatype="", duration=60, cluster_size=5, n
             ax.set_ylim(10**2, None)
         ax.set_xticks([(x+0.5) * bar_width * (len(protocols) + 1) - 1 for x in range(len(ops))])
         ax.set_xticklabels(ops)
+        ax.yaxis.set_major_locator(plt.LogLocator(base=10, numticks=10))
+        ax.yaxis.set_minor_locator(plt.LogLocator(base=10, subs='all', numticks=100))
         ax.set_ylabel("Latency (ms)")
         ax.set_title(f"{kind}".capitalize())
         ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
 
-    plt.figlegend(artists, labels, loc="outside upper center", ncol=3, fontsize=14)
-    plt.savefig(os.path.join(dir_path, f"{datatype}-latency-bars.pdf"))
+    lgd = plt.figlegend(artists, labels, loc="lower center", ncol=3, bbox_to_anchor=(0.5, 1.02))
+    plt.savefig(os.path.join(dir_path, f"{datatype}-latency-bars.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
 
 def plot_latency_bars2(df, dir_path, datatype="", duration=60, cluster_size=5, num_clients=1000, strong_ratio=0.5, ops=[], limit=None):
     df = df[df["datatype"] == datatype]
@@ -185,7 +187,7 @@ def plot_latency_bars2(df, dir_path, datatype="", duration=60, cluster_size=5, n
     bar_width = 1
 
     # Create figure and 2 subplots
-    fig, axs = plt.subplots(2, 1, figsize=(3 * len(ops), 10))  # Adjust figure size to reduce whitespace
+    fig, axs = plt.subplots(2, 1, figsize=(12, 10))  # Adjust figure size to reduce whitespace
     kinds = ["client", "remote"]
 
     for i, kind in enumerate(kinds):
@@ -212,15 +214,17 @@ def plot_latency_bars2(df, dir_path, datatype="", duration=60, cluster_size=5, n
             proto_index += 1
         ax.set_xticks([(x+0.5) * bar_width * (len(protocols) + 1) - 1 for x in range(len(ops))])
         ax.set_xticklabels(ops)
+        ax.yaxis.set_major_locator(plt.LogLocator(base=10, numticks=10))
+        ax.yaxis.set_minor_locator(plt.LogLocator(base=10, subs='all', numticks=100))
         ax.set_ylabel("Latency (ms)")
         ax.set_title(f"{kind}".capitalize())
         ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
 
     # Add the legend only to the lower plot
-    axs[1].legend(bbox_to_anchor=(0.5, 1.25), loc="upper center", ncol=6, fontsize="14")
+    axs[1].legend(bbox_to_anchor=(0.5, 1.15), loc="lower center", ncol=3)
 
     # Adjust spacing between subplots to reduce whitespace
-    fig.subplots_adjust(hspace=0.05)  # Reduce space between subplots
+    fig.subplots_adjust(hspace=0.1)  # Reduce space between subplots
 
     plt.tight_layout()
     plt.savefig(os.path.join(dir_path, f"{datatype}-latency-bars.pdf"))
@@ -311,7 +315,7 @@ def plot_rubis_lines(df, dir_path):
         ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
 
     # Add the legend only to the lower plot, in the position of the upper plot's original legend
-    axs[1].legend(bbox_to_anchor=(0.5, 1.25), loc="upper center", ncol=6, fontsize="10")  # Adjust ncol for all protocols
+    axs[1].legend(bbox_to_anchor=(0.5, 1.25), loc="upper center", ncol=6)  # Adjust ncol for all protocols
 
     # Adjust the space between subplots to reduce whitespace
     fig.subplots_adjust(hspace=0.05)  # Reduce vertical space between plots
@@ -327,7 +331,7 @@ def plot_rubis_throughput(df, dir_path):
     df = df[df["key_range"] < 3]
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
 
-    plt.figure(figsize=(12, 5))  # Adjust size as needed
+    plt.figure(figsize=(12, 5), constrained_layout=True)  # Adjust size as needed
     for proto in protocols:
         proto_df = df[df["proto"] == proto]
         if proto == "causal":
@@ -341,9 +345,8 @@ def plot_rubis_throughput(df, dir_path):
     plt.yticks(ticks=[0, 2000, 4000, 6000, 8000, 10_000, 12_000, 14_000, 16_000],
                labels=["0", "2", "4", "6", "8", "10", "12", "14", "16"])
     plt.grid(linestyle="--", linewidth=0.5)
-    plt.legend(bbox_to_anchor=(0.5, 1.1), loc="upper center", ncol=6, fontsize="10")
-    plt.tight_layout()
-    plt.savefig(os.path.join(dir_path, "rubis_throughput.pdf"))
+    lgd = plt.figlegend(loc="lower center", ncol=3, bbox_to_anchor=(0.5, 1.02))
+    plt.savefig(os.path.join(dir_path, f"rubis_throughput.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
 
 def plot_rubis_unstable_ops(df, dir_path):
     df = df[df["datatype"] == "rubis"]
@@ -351,8 +354,8 @@ def plot_rubis_unstable_ops(df, dir_path):
     df = df[df["cluster_size"] == 5]
     df = df[df["proto"] == "demon"]
     df = df[df["num_clients"] <= 4000]
-    plt.figure(figsize=(12, 3))  # Adjust size as needed
-    plt.ylim(0, 4100)
+    plt.figure(figsize=(12, 5))  # Adjust size as needed
+    # plt.ylim(0, 4100)
     plt.xlim(0, 4100)
     plt.plot(df["num_clients"], df["mean_unstable_ops_count"], PLOT_STYLES["demon"],
              color=COLORS["demon"], linewidth=2)
@@ -376,9 +379,9 @@ def plot_strong_ratio(df, dir_path):
                      label=LABELS[proto], color=COLORS[proto])
         plt.xlabel("Ratio of strong operations")
         plt.ylabel(f"Mean {kind} latency (ms)")
-        plt.legend()
         plt.grid(linestyle="--", linewidth=0.5)
-        plt.savefig(os.path.join(dir_path, f"strong_ratio_{kind}_latency.pdf"))
+        lgd = plt.figlegend(loc="lower center", ncol=3, bbox_to_anchor=(0.5, 1.02))
+        plt.savefig(os.path.join(dir_path, f"strong_ratio_{kind}_latency.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
 
 def plot_rubis_cumulative_latency_dist(dir_path):
     fig, axs = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
@@ -403,8 +406,8 @@ def plot_rubis_cumulative_latency_dist(dir_path):
         ax.set_xlabel("Latency (ms)")
         ax.set_ylabel("Probability")
         ax.set_title(kind.capitalize())
-    plt.figlegend(artists, labels, loc="outside upper center", ncol=3, fontsize=14)
-    plt.savefig(os.path.join(dir_path, f"latency_distribution.pdf"))
+    lgd = plt.figlegend(artists, labels, loc="lower center", ncol=3, bbox_to_anchor=(0.5, 1.02))
+    plt.savefig(os.path.join(dir_path, f"latency_distribution.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -430,7 +433,7 @@ if __name__ == "__main__":
         elif figure == "rubis-unstable":
             plot_rubis_unstable_ops(df, path)
         elif figure == "rubis-latency-bars":
-            plot_latency_bars2(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, limit=2000, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
+            plot_latency_bars2(df, path, datatype="rubis", num_clients=100, strong_ratio=1, duration=60, ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"])
         elif figure == "strong-ratio":
             plot_strong_ratio(df, path)
         elif figure == "scaling":
