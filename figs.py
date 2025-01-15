@@ -3,6 +3,7 @@ import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerTuple
 import pandas as pd
 import numpy as np
 import scipy.stats as st
@@ -339,7 +340,7 @@ def plot_rubis_throughput(df, dir_path):
         else:
             style =  PLOT_STYLES[proto]
         plt.plot(proto_df["num_clients"], proto_df["throughput"], style,
-                 label=LABELS[proto], color=COLORS[proto])
+                 label=LABELS[proto], color=COLORS[proto], linewidth=2.0, markersize=10.0)
     plt.xlabel("Clients per region")
     plt.ylabel("Throughput (K txns/s)")
     plt.yticks(ticks=[0, 2000, 4000, 6000, 8000, 10_000, 12_000, 14_000, 16_000],
@@ -370,15 +371,17 @@ def plot_strong_ratio(df, dir_path):
     df = df[df["duration"] == 10]
     df = df[df["cluster_size"] == 5]
     df = df[df["num_clients"] == 100]
+    df = df[df["strong_ratio"] < 1.0]
     protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
     for kind in ["client", "remote"]:
         plt.figure(figsize=(12, 5), constrained_layout=True)
+        plt.ylim(-20, 270)
         for proto in protocols:
             proto_df = df[df["proto"] == proto]
             plt.plot(proto_df["strong_ratio"], proto_df[f"{kind}_mean_latency"], PLOT_STYLES[proto],
-                     label=LABELS[proto], color=COLORS[proto])
+                     label=LABELS[proto], color=COLORS[proto], linewidth=2.0, markersize=10.0)
         plt.xlabel("Ratio of strong operations")
-        plt.ylabel(f"Mean {kind} latency (ms)")
+        plt.ylabel(f"Mean latency (ms)")
         plt.grid(linestyle="--", linewidth=0.5)
         lgd = plt.figlegend(loc="lower center", ncol=3, bbox_to_anchor=(0.5, 1.02))
         plt.savefig(os.path.join(dir_path, f"strong_ratio_{kind}_latency.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
@@ -409,6 +412,81 @@ def plot_rubis_cumulative_latency_dist(dir_path):
     lgd = plt.figlegend(artists, labels, loc="lower center", ncol=3, bbox_to_anchor=(0.5, 1.02))
     plt.savefig(os.path.join(dir_path, f"latency_distribution.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
 
+
+def plot_rubis_client_latency(df, dir_path):
+    ops=["Bid", "CloseAuction", "BuyNow", "OpenAuction", "Sell", "RegisterUser"]
+    df = df[df["datatype"] == "rubis"]
+    df = df[df["duration"] == 60]
+    df = df[df["cluster_size"] == 5]
+    df = df[df["num_clients"] == 100]
+    df = df[df["strong_ratio"] == 1]
+    protocols = [proto for proto in PROTOS if proto in df["proto"].unique()]
+    index = np.arange(len(ops))
+    bar_width = 1
+
+    fig, axs = plt.subplots(1, 2, width_ratios=(4, 9), figsize=(24, 5), constrained_layout=True)
+    artists = []
+
+    ax = axs[1]
+    ax.set_yscale('log', base=10)
+    proto_index = 0  # Reset index for protocols
+    for proto in protocols:
+        proto_df = df[df["proto"] == proto]
+        artist = ax.bar(
+            x=index * (len(protocols) + 1) * bar_width + proto_index * bar_width,
+            height=[proto_df[f"{op}_client_median_latency"].iloc[0] for op in ops],
+            yerr=([0 for _ in range(len(ops))], [proto_df[f"{op}_client_p99_latency"].iloc[0] for op in ops]),
+            width=bar_width,
+            label=LABELS[proto],
+            capsize=5.0,
+            color=COLORS[proto],
+            edgecolor="black",
+            hatch=BAR_PATTERNS[proto],
+        )
+        artists.append(artist)
+        proto_index += 1
+    ax.set_xticks([(x+0.5) * bar_width * (len(protocols) + 1) - 1 for x in range(len(ops))])
+    ax.set_xticklabels(ops)
+    ax.yaxis.set_major_locator(plt.LogLocator(base=10, numticks=10))
+    ax.yaxis.set_minor_locator(plt.LogLocator(base=10, subs='all', numticks=100))
+    ax.set_ylabel("Latency (ms)")
+    ax.set_title(f"Median & 99th percentile latency per operation")
+    ax.grid(linestyle="--", linewidth=0.5, which="both", axis="y")
+
+    ax = axs[0]
+    labels = []
+    for i, proto in enumerate(protocols):
+        df = pd.read_csv(os.path.join(dir_path, f"rubis_{proto}_5nodes_60s_100clients_1strong_1keys.csv"))
+        init = df[df["kind"] == "initiated"]
+        merged = init.merge(df[df["kind"] == "visible"][["meta", "node", "unix_micros"]], on=["meta", "node"], suffixes=("", "_end"))
+        merged["latency"] = (merged["unix_micros_end"] - merged["unix_micros"]) / 1000
+        artist = ax.ecdf(merged["latency"], label=LABELS[proto], color=COLORS[proto], linestyle=LINE_STYLE[proto], linewidth=2.0)
+        artists[i] = (artists[i], artist)
+        labels.append(LABELS[proto])
+    ax.grid(linestyle="--", linewidth=0.5, which="major")
+    ax.set_xscale("log", base=10)
+    ax.set_xlabel("Latency (ms)")
+    ax.set_ylabel("Probability")
+    ax.set_title("Cumulative latency distribution")
+
+    lgd = plt.figlegend(artists, labels, handler_map={tuple: HandlerTuple(ndivide=None)}, handlelength=4.0, loc="lower center", ncol=6, bbox_to_anchor=(0.5, 1.0))
+    plt.savefig(os.path.join(dir_path, f"rubis_client_latency.pdf"), bbox_extra_artists=(lgd,), bbox_inches="tight")
+
+
+def plot_workload_classification(name):
+    if name == "rubis":
+        ops = ["Bid", "BuyNow", "RegisterUser", "Sell", "OpenAuction", "CloseAuction"]
+        percentage = [60, 13, 7, 8, 8, 4]
+        is_strong = {
+            "DeMon": [False, True, True, False, False, True],
+            "RedBlue": [True, True, True, False, False, True],
+        }
+
+    plt.figure(figsize=(12, 5), constrained_layout=True)
+    for i, op in enumerate(ops):
+        plt.barh()
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("argument required to specify input directory")
@@ -424,10 +502,14 @@ if __name__ == "__main__":
 
     if figure == "latency-dist":
         plot_rubis_cumulative_latency_dist(path)
+    elif figure == "client-latency-dist":
+        plot_rubis_cumulative_client_latency_dist(path)
     else:
         df = aggregate(path, recompute)
         if figure == "rubis-lines":
             plot_rubis_lines(df, path)
+        elif figure == "rubis-client-latency":
+            plot_rubis_client_latency(df, path)
         elif figure == "rubis-throughput":
             plot_rubis_throughput(df, path)
         elif figure == "rubis-unstable":
